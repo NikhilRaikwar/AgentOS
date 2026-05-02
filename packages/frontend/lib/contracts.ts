@@ -6,6 +6,8 @@ export const sepoliaContracts = {
   validation: "0x3C5E64A4f0fc23C4205AC5a5D281Ecab06Ee57D9",
   registry: "0x4180F328e2600E8b846e13A1EFe85D21690C6e55",
   factory: "0x75C553505C7912377E08e4B9b2c824D722a704CB",
+  resolver: (process.env.NEXT_PUBLIC_ENS_RESOLVER_ADDRESS ||
+    "0xE99638b40E4Fff0129D56f03b55b6bbC4BBE49b5") as `0x${string}`,
   subnameRegistrar: (process.env.NEXT_PUBLIC_AGENT_SUBNAME_REGISTRAR_ADDRESS ||
     "0x3ccF94F8B4E5Dd6886A7cbcb2f3C52482dA4ff9E") as `0x${string}`
 } as const;
@@ -30,4 +32,17 @@ export const agentRegistryAbi = parseAbi([
 export const agentSubnameRegistrarAbi = parseAbi([
   "event AgentSubnameRegistered(string indexed label,string ensName,bytes32 indexed node,address indexed owner,address wallet)",
   "function register(string label,address owner,address wallet,(string key,string value)[] records) returns (bytes32 node)"
+]);
+
+export const ensPublicResolverAbi = parseAbi([
+  "function setText(bytes32 node,string key,string value)"
+]);
+
+export const agentSmartWalletAbi = parseAbi([
+  "event Executed(address indexed target,uint256 value,bytes data,bytes result)",
+  "function executor() view returns (address)",
+  "function allowedTargets(address target) view returns (bool)",
+  "function setExecutor(address newExecutor)",
+  "function setAllowedTarget(address target,bool allowed)",
+  "function execute(address target,uint256 value,bytes data) returns (bytes result)"
 ]);

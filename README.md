@@ -1,277 +1,554 @@
-# AgentFi OS
+# AgentOS
 
-AgentFi OS is the missing OS layer for onchain AI agents: ENS gives every agent a name, metadata, and reputation; Uniswap gives agents transaction and payment rails; KeeperHub gives execution reliability.
+> **The missing execution OS for onchain AI agents.**
+> ENS gives agents identity and discovery. Uniswap gives agents financial routing. KeeperHub gives agents reliable settlement with an audit trail.
 
-Built for ETHGlobal Open Agents with `agentos.eth` as the agent namespace.
+Built for **ETHGlobal Open Agents** with deep ENS, Uniswap, and KeeperHub integrations.
 
-## What It Does
+---
 
-- Deploys ENS-named agents such as `trade.agentos.eth`, `research.agentos.eth`, and `orchestrate.agentos.eth`.
-- Stores agent capabilities, fees, preferred token, model, task count, and reputation in ENS text records.
-- Gives each agent a revocable smart wallet owned by the connected user wallet, not a server deployer key.
-- Uses OpenAI tool calling for agent reasoning.
-- Uses the Uniswap Trading API for quotes, swaps, and agent-to-agent payments.
-- Uses KeeperHub for workflow execution, retries, gas optimization, and audit trails.
-- Adds ERC-8004-style identity, reputation, and validation registries for trustless agent discovery.
+## What It Solves
+
+AI agents can reason, but onchain they fail at the parts that matter most:
+
+| Problem | AgentOS Solution |
+|---|---|
+| No persistent identity | Every agent gets a real ENS subname under `agentos.eth` |
+| No decentralized discovery | Agent capabilities stored as ENS text records — no central DB |
+| No verifiable reputation | ERC-8004-style onchain identity + feedback registries |
+| Execution fails on gas, approvals, retries | KeeperHub Direct Execution handles the full transaction lifecycle |
+| No clean payment path between agents | Uniswap Trading API routes value to any agent's preferred token |
+
+---
+
+## Live Proof — Real Sepolia Transactions
+
+These are not screenshots. These are live Etherscan links from actual KeeperHub + Uniswap execution.
+
+| Step | Transaction | Execution ID |
+|---|---|---|
+| USDC Approval to Permit2 | [0x25d8d8...](https://sepolia.etherscan.io/tx/0x25d8d843eacb894c9d575d3a770be7fb3dd99aa138a09c9aef02d3f224443b35) | `gp9i4rbct6i36uv028vav` |
+| Uniswap Swap (KeeperHub-routed) | [0xbc7bdf...](https://sepolia.etherscan.io/tx/0xbc7bdf9a6bd1fe4fe627835b75c13681c65a5d9b30f16321a1b0f65ef2282293) | `u8hg88102bu9wi5u126uw` |
+
+**Verified swap result:**
+- KeeperHub wallet: `0x924CAF4F0FDAfea9eF3653374D2f93F56059c7e5`
+- Path: Sepolia USDC → WETH
+- Input: 1 USDC
+- Output: 0.000122895544056695 WETH
+- Final demo balances after the latest run: USDC `1` · WETH `0.000122895544056695`
+
+---
 
 ## Architecture
 
+### System Overview
+
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#1B6B45','primaryTextColor':'#F5F0E8','primaryBorderColor':'#1B6B45','lineColor':'#B8860B','secondaryColor':'#1B3F6B','tertiaryColor':'#C8344A','background':'#1A1612','mainBkg':'#1A1612','nodeBorder':'#3D3830','clusterBkg':'#3D3830','titleColor':'#F5F0E8','edgeLabelBackground':'#3D3830','fontFamily':'monospace'}}}%%
 flowchart TD
-  U["User Wallet"] --> F["Next.js Frontend"]
-  F --> FAC["Agent Wallet Factory: createAgentWalletFor(owner)"]
-  F --> ENSREG["Agent Subname Registrar"]
-  F --> R["ERC-8004 Registries"]
-  F --> AR["Agent Registry"]
-  F --> B["Express Backend"]
-  B --> O["OpenAI Tool Runtime"]
-  O --> ENS["ENS Sepolia: agentos.eth subnames + text records"]
-  O --> UNI["Uniswap Trading API: quote, swap, order"]
-  O --> KH["KeeperHub API/MCP: workflows, execution, audit logs"]
-  FAC --> W["Agent Smart Wallet"]
-  ENSREG --> ENS
-  W --> UNI
-  KH --> W
-  R --> ID["Identity Registry"]
-  R --> REP["Reputation Registry"]
-  R --> VAL["Validation Registry"]
+    UW["🦊 User Wallet\nConnected on Sepolia"]:::user
+
+    subgraph FRONTEND["📱 Next.js Frontend"]
+        LP["Landing Page\nRainbowKit connect"]:::fe
+        DB["Dashboard\nDeploy + Chat + Records"]:::fe
+    end
+
+    subgraph CONTRACTS["⛓️ Sepolia Contracts — deployed + verified"]
+        FAC["AgentWalletFactory\n0x75C553...4CB"]:::contract
+        REG["AgentSubnameRegistrar\n0x3ccF94...9E"]:::contract
+        ID["AgentIdentityRegistry8004\n0xB7dd5B...300"]:::contract
+        AR["AgentRegistry\n0x4180F3...55"]:::contract
+        SW["AgentSmartWallet\nOwner = User Wallet"]:::contract
+    end
+
+    subgraph ENS["🌐 ENS Sepolia — agentos.eth"]
+        SUB["name.agentos.eth\nReal subname"]:::ens
+        TXT["Text Records\nspecialty · fee · endpoint\nreputation · preferred_token"]:::ens
+        ADR["Address Record\n→ Smart Wallet"]:::ens
+    end
+
+    subgraph BACKEND["🖥️ Express Backend"]
+        OA["OpenAI Agent Runtime\nTool-calling loop"]:::be
+        ENSS["ENS Adapter\nviem getEnsAddress\ngetEnsText"]:::be
+        UNIS["Uniswap Adapter\nTrading API"]:::be
+        KHS["KeeperHub Adapter\nDirect Execution"]:::be
+    end
+
+    subgraph UNISWAP["🦄 Uniswap Trading API"]
+        QT["/quote\nRouting + price"]:::uni
+        AP["/check_approval\nPermit2 check"]:::uni
+        SW2["/swap\nUniversal Router calldata"]:::uni
+    end
+
+    subgraph KH["⚙️ KeeperHub Direct Execution"]
+        EX["/execute/contract-call\nApproval + Permit2 + Swap"]:::kh
+        ST["/execute/{id}/status\nPolling + audit"]:::kh
+        MCP["MCP Server\nkeeperhub://workflows"]:::kh
+    end
+
+    UW -->|signs 4 txs| FRONTEND
+    LP -->|wallet connect| DB
+    DB -->|createAgentWalletFor| FAC
+    FAC -->|deploys| SW
+    DB -->|register label + records| REG
+    REG -->|setSubnodeRecord\nsetAddr\nsetText| ENS
+    DB -->|registerWithWallet| ID
+    DB -->|registerAgent| AR
+    DB -->|chat messages| BACKEND
+    OA -->|ens_discover_agent| ENSS
+    ENSS -->|resolves name| ENS
+    OA -->|uniswap_get_quote| UNIS
+    UNIS -->|POST /quote| QT
+    UNIS -->|POST /check_approval| AP
+    UNIS -->|POST /swap| SW2
+    UNIS -->|submit tx| KHS
+    KHS -->|POST| EX
+    KHS -->|GET| ST
+    SW -.->|holds ETH for execution| KH
+
+    classDef user fill:#C8344A,color:#F5F0E8,stroke:#C8344A
+    classDef fe fill:#1B3F6B,color:#F5F0E8,stroke:#1B3F6B
+    classDef contract fill:#B8860B,color:#1A1612,stroke:#B8860B
+    classDef ens fill:#1B6B45,color:#F5F0E8,stroke:#1B6B45
+    classDef be fill:#3D3830,color:#F5F0E8,stroke:#6B6356
+    classDef uni fill:#C8344A,color:#F5F0E8,stroke:#C8344A
+    classDef kh fill:#B8860B,color:#1A1612,stroke:#B8860B
 ```
+
+### User Flow — Deploy an Agent
+
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#1B6B45','primaryTextColor':'#F5F0E8','lineColor':'#B8860B','background':'#1A1612','mainBkg':'#0D1117','nodeBorder':'#3D3830','clusterBkg':'#131920','titleColor':'#F5F0E8','fontFamily':'monospace'}}}%%
+sequenceDiagram
+    actor User as 🦊 User Wallet
+    participant FE as 📱 Dashboard
+    participant FAC as ⛓️ WalletFactory
+    participant ENSR as 🌐 ENS Registrar
+    participant ID as 🪪 Identity8004
+    participant AR as 📋 AgentRegistry
+
+    Note over User,AR: All 4 transactions signed directly by User Wallet
+
+    User->>FE: Connect wallet on Sepolia
+    User->>FE: Enter name + specialty + fee + token
+    FE->>User: Request wallet signature 1/4
+    User->>FAC: createAgentWalletFor(name, node, owner=User, executor=Backend)
+    FAC-->>FE: AgentWalletCreated event → smartWallet address
+
+    FE->>User: Request wallet signature 2/4
+    User->>ENSR: register(label, owner=User, wallet=smartWallet, textRecords[])
+    ENSR-->>FE: AgentSubnameRegistered → name.agentos.eth live
+
+    FE->>User: Request wallet signature 3/4
+    User->>ID: registerWithWallet(agentURI, metadata[], wallet=smartWallet)
+    ID-->>FE: ERC-8004 identity NFT minted to User
+
+    FE->>User: Request wallet signature 4/4
+    User->>AR: registerAgent(node, ensName, smartWallet, owner=User)
+    AR-->>FE: Agent indexed in AgentRegistry
+
+    Note over FE: Agent is live — ENS resolves, text records readable, runtime ready
+```
+
+### Agent Execution Flow — Quote → KeeperHub Swap
+
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#C8344A','primaryTextColor':'#F5F0E8','lineColor':'#1B6B45','background':'#1A1612','mainBkg':'#0D1117','nodeBorder':'#3D3830','clusterBkg':'#131920','titleColor':'#F5F0E8','fontFamily':'monospace'}}}%%
+sequenceDiagram
+    actor User as 👤 User Chat
+    participant BE as 🖥️ Backend Agent
+    participant OA as 🤖 OpenAI Runtime
+    participant ENS as 🌐 ENS Sepolia
+    participant UNI as 🦄 Uniswap API
+    participant KH as ⚙️ KeeperHub
+
+    User->>BE: "Quote 0.01 ETH to USDC"
+    BE->>OA: Tool-calling loop starts
+    OA->>ENS: ens_discover_agent(trade.agentos.eth)
+    ENS-->>OA: address + specialty + fee + preferred_token
+    OA->>UNI: POST /check_approval {token, amount, wallet}
+    UNI-->>OA: approval tx (if needed)
+    OA->>KH: executeContractCall(approval tx)
+    KH-->>OA: executionId, poll → completed
+    OA->>UNI: POST /quote {generatePermitAsTransaction: true}
+    UNI-->>OA: routing + output + permitTransaction
+    OA->>KH: executeContractCall(permitTransaction)
+    KH-->>OA: executionId, poll → completed
+    OA->>UNI: POST /swap {quoteResponse, sans permitData}
+    UNI-->>OA: Universal Router calldata
+    OA->>KH: executeContractCall(swap calldata)
+    KH-->>OA: executionId, txHash, audit log URL
+    OA-->>BE: "Swap complete — txHash 0x96b6... · KeeperHub run: jr3hx2..."
+    BE-->>User: Response with Etherscan + KeeperHub links
+
+    Note over KH: Retries, gas bump, private routing, audit trail included
+```
+
+### ENS as Agent Discovery Layer
+
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#1B6B45','primaryTextColor':'#F5F0E8','lineColor':'#B8860B','background':'#1A1612','mainBkg':'#0D1117','nodeBorder':'#1B6B45','clusterBkg':'#131920','titleColor':'#F5F0E8','fontFamily':'monospace'}}}%%
+graph LR
+    O["🟣 orchestrate.agentos.eth\n(Orchestrator Agent)"]:::orch
+
+    subgraph ENS ["🌐 ENS Sepolia — agentos.eth namespace"]
+        T["🔴 trade.agentos.eth"]:::trade
+        R["🟢 research.agentos.eth"]:::res
+        C["🔵 custom.agentos.eth"]:::custom
+    end
+
+    subgraph TR ["trade.agentos.eth records"]
+        T1["specialty: trading,defi"]:::rec
+        T2["fee: 0.001 ETH"]:::rec
+        T3["preferred_token: USDC"]:::rec
+        T4["endpoint: api.../trade/run"]:::rec
+        T5["reputation: 78"]:::rec
+        T6["keeperhub: enabled"]:::rec
+    end
+
+    subgraph RR ["research.agentos.eth records"]
+        R1["specialty: research,analysis"]:::rec
+        R2["fee: 0.001 ETH"]:::rec
+        R3["preferred_token: USDC"]:::rec
+        R4["reputation: 91"]:::rec
+    end
+
+    O -->|"1. resolve ENS name"| T
+    O -->|"1. resolve ENS name"| R
+    T -->|"2. read text records"| TR
+    R -->|"2. read text records"| RR
+    O -->|"3. pick agent by specialty+rep\n4. pay via Uniswap to preferred_token\n5. call endpoint"| T
+    O -->|"3. pick agent by specialty+rep\n4. pay via Uniswap to preferred_token\n5. call endpoint"| R
+
+    classDef orch fill:#7B5EFF,color:#F5F0E8,stroke:#7B5EFF
+    classDef trade fill:#C8344A,color:#F5F0E8,stroke:#C8344A
+    classDef res fill:#1B6B45,color:#F5F0E8,stroke:#1B6B45
+    classDef custom fill:#1B3F6B,color:#F5F0E8,stroke:#1B3F6B
+    classDef rec fill:#3D3830,color:#C8BFB0,stroke:#6B6356
+```
+
+---
 
 ## Demo Agents
 
-| Agent | Role | ENS Usage | Uniswap Usage |
-| --- | --- | --- | --- |
-| `trade.agentos.eth` | Trading agent | Capability + reputation records | Quotes and prepares swaps |
-| `research.agentos.eth` | DeFi research agent | Discoverable service profile | Receives payment in preferred token |
-| `orchestrate.agentos.eth` | Multi-agent coordinator | Resolves and hires agents | Routes agent payments |
+| Agent ENS | Role | Uniswap Use | KeeperHub Use |
+|---|---|---|---|
+| `trade.agentos.eth` | Trading agent | `/quote` + `/swap` calldata prep | Routes approval + Permit2 + swap execution |
+| `research.agentos.eth` | DeFi research | Receives payment in `preferred_token: USDC` | Executes payment routing |
+| `orchestrate.agentos.eth` | Multi-agent coordinator | Resolves preferred token via ENS, routes via Uniswap | Ensures payment delivery |
 
-## Full Demo Flow
+---
 
-Use this sequence for the ETHGlobal demo video or live judge walkthrough.
+## Sponsor Integration Fit
 
-### 1. Show the landing page
+### 🦄 Uniswap
 
-Open `http://localhost:3000`.
+AgentOS uses the Uniswap Trading API as the financial execution rail for ENS-named agents.
 
-Explain:
+**What we integrate:**
 
-- AgentOS is an operating layer for onchain AI agents.
-- ENS gives each agent a persistent name and discovery records.
-- Uniswap gives each agent financial execution and payment routing.
-- KeeperHub gives reliable transaction delivery and auditability.
-
-### 2. Connect a wallet
-
-Click **Connect Wallet** and connect the Sepolia wallet that will own the new agent.
-
-Key point:
-
-- The user wallet signs the deployment.
-- The server does not custody the user private key.
-- The deployer key is not used for normal user agent creation.
-
-### 3. Deploy a new agent
-
-Open the dashboard and click **Deploy Agent**.
-
-Example inputs:
-
-```text
-Agent name: trade
-Specialty: trading,defi,rebalancing
-Preferred token: USDC
-Fee: 0.001 ETH
+```
+POST /check_approval   — ERC20 approval check before swap
+POST /quote            — Routing + price discovery (generatePermitAsTransaction: true)
+POST /swap             — Universal Router calldata preparation
+POST /order            — UniswapX-ready path (DUTCH_V2 supported)
 ```
 
-The app executes four wallet-signed transactions:
+**Real execution proof:**
+- Swap path: Sepolia USDC → WETH
+- Input: 1 USDC → Output: 0.000122838244036572 WETH
+- Transaction: [0x96b6e0f7bc7db457...](https://sepolia.etherscan.io/tx/0x96b6e0f7bc7db457ccf11b9bcada1016442008c5e8e99e5d45aef4c1287eaa7a)
 
-1. `AgentWalletFactory.createAgentWalletFor(...)`
-   - Creates a smart wallet.
-   - Sets the connected wallet as owner.
-   - Sets the backend executor as an allowed executor.
+**Why it matters:** Agents don't just show a swap UI. Uniswap is the financial rail for agent-to-agent payments and autonomous DeFi execution.
 
-2. `AgentSubnameRegistrar.register(...)`
-   - Mints `trade.agentos.eth`.
-   - Sets the resolver address.
-   - Writes resolver text records such as `specialty`, `fee`, `endpoint`, `preferred_token`, `framework`, `reputation`, and `wallet_type`.
-   - Points the ENS address record at the agent smart wallet.
+> `FEEDBACK.md` is included in the repo root with real integration notes.
 
-3. `AgentIdentityRegistry8004.registerWithWallet(...)`
-   - Mints an ERC-8004-style identity NFT to the connected wallet.
-   - Binds the identity to the agent smart wallet.
-   - Stores machine-readable agent metadata.
+---
 
-4. `AgentRegistry.registerAgent(...)`
-   - Indexes the agent for AgentOS discovery.
-   - Links the ENS node, ENS name, smart wallet, and owner.
+### 🌐 ENS
 
-### 4. Validate ENS
+**What ENS does (non-cosmetic):**
 
-Open the Sepolia ENS app and search the created subname, for example:
+Every agent deployed through AgentOS gets a real `name.agentos.eth` subname. ENS is the runtime directory — not a label.
 
-```text
-trade.agentos.eth
+| ENS Usage | What it does |
+|---|---|
+| Address record | Points to the agent's smart wallet |
+| `specialty` text record | Machine-readable capability for orchestrator routing |
+| `fee` text record | Agent's service cost |
+| `preferred_token` text record | Uniswap routes payment to this token |
+| `endpoint` text record | Callable API endpoint for agent-to-agent invocation |
+| `reputation` text record | Updated after task completion |
+| `keeperhub` text record | Signals execution reliability support |
+| `agentos.lastExecutionTx` text record | Latest public execution proof |
+| `agentos.lastKeeperHubRun` text record | Latest KeeperHub operator audit ID |
+
+**Creative use:** ENS text records are the agent's capability manifest. An orchestrator resolves any `*.agentos.eth` name, reads its records, and decides which agent to hire — with no central registry, no API key, and no offchain database.
+
+**ERC-8004 integration:** Three registry contracts (Identity, Reputation, Validation) implement the emerging ERC-8004 standard for trustless agent identity and onchain feedback.
+
+---
+
+### ⚙️ KeeperHub
+
+AgentOS routes every Uniswap transaction through KeeperHub Direct Execution.
+
+**What KeeperHub does:**
+- Executes ERC20 approvals reliably (not just broadcast-and-hope)
+- Executes Permit2 transactions with retry support
+- Executes Universal Router swap calldata with gas optimization
+- Returns `executionId`, `txHash`, and audit log per transaction
+
+**Real KeeperHub execution IDs:**
+
+| Transaction | executionId | Etherscan |
+|---|---|---|
+| USDC approval | `gp9i4rbct6i36uv028vav` | [0x25d8d8...](https://sepolia.etherscan.io/tx/0x25d8d843eacb894c9d575d3a770be7fb3dd99aa138a09c9aef02d3f224443b35) |
+| Uniswap swap | `u8hg88102bu9wi5u126uw` | [0xbc7bdf...](https://sepolia.etherscan.io/tx/0xbc7bdf9a6bd1fe4fe627835b75c13681c65a5d9b30f16321a1b0f65ef2282293) |
+
+**MCP configured:** `https://app.keeperhub.com/mcp` — OAuth authenticated in Codex.
+
+**Actionable feedback for KeeperHub (Builder Feedback Bounty):**
+
+During integration, native ETH → token swaps through Universal Router reverted in KeeperHub Direct Execution simulation because `msg.value` was not forwarded in the simulation step. The ERC20 → token path using `generatePermitAsTransaction: true` worked correctly. We also found that public proof should use Etherscan links because KeeperHub dashboard run pages are private to the organization. See `KEEPERHUB_FEEDBACK.md` for full details.
+
+---
+
+## Deployed Contracts (Sepolia)
+
+```
+ERC8004_IDENTITY_REGISTRY_ADDRESS    = 0xB7dd5B72bF248806F63d645a6bDaFfDb053f4300
+ERC8004_REPUTATION_REGISTRY_ADDRESS  = 0xe7f6b315cA9d49bA1aEcA516311a043542A2d161
+ERC8004_VALIDATION_REGISTRY_ADDRESS  = 0x3C5E64A4f0fc23C4205AC5a5D281Ecab06Ee57D9
+AGENT_REGISTRY_ADDRESS               = 0x4180F328e2600E8b846e13A1EFe85D21690C6e55
+AGENT_WALLET_FACTORY_ADDRESS         = 0x75C553505C7912377E08e4B9b2c824D722a704CB
+AGENT_SUBNAME_REGISTRAR_ADDRESS      = 0x3ccF94F8B4E5Dd6886A7cbcb2f3C52482dA4ff9E
 ```
 
-Validate:
+**ENS Parent:** `agentos.eth` on Sepolia
+**Registrar manager:** `0x3ccF94F8B4E5Dd6886A7cbcb2f3C52482dA4ff9E` (AgentSubnameRegistrar)
 
-- The subname exists.
-- The address record points to the deployed smart wallet.
-- Text records contain the agent capability metadata.
-- `agentos.eth` manager is the registrar contract:
+Verify at: `https://sepolia.app.ens.domains/agentos.eth`
 
-```text
-0x3ccF94F8B4E5Dd6886A7cbcb2f3C52482dA4ff9E
+Full deployment metadata: [`deployments/sepolia.json`](deployments/sepolia.json)
+
+---
+
+## Project Structure
+
+```
+agentfi-os/
+├── packages/
+│   ├── contracts/          Solidity — 6 contracts deployed on Sepolia
+│   │   ├── AgentWalletFactory.sol
+│   │   ├── AgentSubnameRegistrar.sol
+│   │   ├── AgentIdentityRegistry8004.sol
+│   │   ├── AgentReputationRegistry8004.sol
+│   │   ├── AgentValidationRegistry8004.sol
+│   │   └── AgentRegistry.sol
+│   ├── backend/            Express + TypeScript — agent runtime
+│   │   └── src/
+│   │       ├── server.ts         REST API
+│   │       ├── ens.ts            ENS Sepolia adapter (viem)
+│   │       ├── uniswap.ts        Uniswap Trading API adapter
+│   │       ├── keeperhub.ts      KeeperHub Direct Execution adapter
+│   │       └── openai-agent.ts   Tool-calling agent loop
+│   └── frontend/           Next.js 14 — landing + dashboard
+│       ├── components/
+│       │   ├── LandingPage.tsx
+│       │   └── Dashboard.tsx     Deploy, chat, ENS records
+│       └── lib/contracts.ts      Typed ABIs + contract addresses
+├── FEEDBACK.md             Uniswap Trading API feedback
+├── KEEPERHUB_FEEDBACK.md   KeeperHub integration feedback
+├── deployments/sepolia.json
+└── .env.example
 ```
 
-### 5. Use the agent runtime
+---
 
-In the dashboard chat, ask:
+## Local Setup
 
-```text
+```bash
+# 1. Clone and install
+git clone https://github.com/NikhilRaikwar/agentfi-os
+cd agentfi-os
+npm install
+cd packages/backend  && npm install --workspaces=false
+cd ../frontend       && npm install --workspaces=false
+cd ../contracts      && npm install --workspaces=false
+
+# 2. Configure environment
+cp .env.example .env
+# Fill in:
+#   OPENAI_API_KEY          — from platform.openai.com
+#   UNISWAP_API_KEY         — from developers.uniswap.org/dashboard
+#   KEEPERHUB_API_KEY       — kh_ organization key from keeperhub.com
+#   SEPOLIA_RPC_URL         — Infura/Alchemy Sepolia endpoint
+#   NEXT_PUBLIC_WALLETCONNECT_ID
+
+# 3. Run backend
+cd packages/backend
+npm run dev
+
+# 4. Run frontend
+cd packages/frontend
+npm run dev
+
+# 5. Open
+# http://localhost:3000    — Landing page
+# http://localhost:3001/health  — Backend health (verifies KeeperHub + Uniswap)
+```
+
+### Deploy contracts (optional — already deployed)
+
+```bash
+cd packages/contracts
+
+# All contracts
+npm run deploy:sepolia
+
+# Subname registrar only (if redeploying)
+npm run deploy:registrar:sepolia
+```
+
+### Health check
+
+```bash
+curl http://localhost:3001/health
+```
+
+Expected response:
+```json
+{
+  "ok": true,
+  "chainId": 11155111,
+  "parentEnsName": "agentos.eth",
+  "openai": true,
+  "uniswap": true,
+  "keeperhub": { "ok": true }
+}
+```
+
+---
+
+## Demo Walkthrough
+
+### Part 1 — Landing page
+
+Visit `http://localhost:3000`. Connect wallet on Sepolia. Redirected to dashboard automatically.
+
+### Part 2 — Deploy a real agent
+
+Click **Deploy Agent**. Enter:
+```
+name:     trader
+specialty: trading,defi,uniswap
+fee:      0.001 ETH
+token:    USDC
+```
+
+Sign 4 wallet transactions:
+1. `AgentWalletFactory.createAgentWalletFor` — smart wallet deployed, owned by your wallet
+2. `AgentSubnameRegistrar.register` — `trader.agentos.eth` minted on ENS Sepolia
+3. `AgentIdentityRegistry8004.registerWithWallet` — ERC-8004 identity NFT to your wallet
+4. `AgentRegistry.registerAgent` — indexed in on-chain registry
+
+### Part 3 — Validate ENS
+
+Open: `https://sepolia.app.ens.domains/trader.agentos.eth`
+
+Verify:
+- Subname exists
+- Address record → smart wallet address
+- Text records: specialty, fee, preferred_token, endpoint, reputation, keeperhub
+- After execution, text records can also include agentos.lastExecutionTx, agentos.lastKeeperHubRun, and agentos.reputation
+
+### Part 4 — Agent runtime
+
+In the chat, ask:
+```
 Get a quote to swap 0.01 ETH to USDC
 ```
 
-The backend OpenAI agent can call tools for:
+The OpenAI agent:
+1. Calls `ens_discover_agent` → reads ENS records
+2. Calls `uniswap_get_quote` → Uniswap Trading API `/quote`
+3. Shows route + expected output
+4. Prepares KeeperHub execution path on confirmation
 
-- ENS discovery.
-- Uniswap quote preparation.
-- KeeperHub execution history/status.
+### Part 5 — KeeperHub execution
 
-The important demo point is that the agent does not just chat. It uses real sponsor infrastructure as tools.
-
-### 6. Validate Uniswap
-
-The Uniswap integration uses the Trading API through the backend.
-
-Demo:
-
-- Ask for an ETH -> USDC quote.
-- Show that the app calls Uniswap for route/price discovery.
-- Show that swap calldata can be prepared for Universal Router execution.
-
-### 7. Validate KeeperHub
-
-Open `http://localhost:3001/health`.
-
-Validate:
-
-- `keeperhub.ok` is `true`.
-- The backend is authenticated with the KeeperHub organization key.
-- Prepared swap calldata is routed to KeeperHub Direct Execution through `/execute/contract-call`.
-
-KeeperHub is the reliability layer: retries, gas handling, private routing, and audit trails.
-
-### 8. Explain the full loop
-
-The final story:
-
-```text
-User wallet -> Agent smart wallet -> ENS subname -> ERC-8004 identity -> Uniswap execution -> KeeperHub reliability -> reputation update
+Backend calls:
+```
+POST /execute/contract-call  (approval if needed)
+POST /execute/contract-call  (Permit2 transaction)
+POST /execute/contract-call  (Universal Router swap)
+GET  /execute/{id}/status    (poll to completed)
 ```
 
-That is the core AgentOS primitive: named, discoverable, user-owned, self-paying onchain agents.
+Response includes `executionId` and Etherscan `txHash`.
 
-## Sepolia Deployment
+---
 
-```text
+## ENS Configuration
+
+`agentos.eth` is owned and configured on Sepolia:
+
+1. Parent name: `agentos.eth`
+2. Manager/controller: `AgentSubnameRegistrar` contract
+3. Users call `AgentSubnameRegistrar.register(label, owner, wallet, records[])` directly from their connected wallet — no server private key involved
+
+To add your own parent name:
+
+```bash
+# Deploy registrar for your ENS name
+ENS_RESOLVER_ADDRESS=0x... PARENT_ENS_NAME=yourname.eth npm run deploy:registrar:sepolia
+```
+
+Then in Sepolia ENS app, set the printed registrar address as the manager of `yourname.eth`.
+
+---
+
+## Known Limitations
+
+| Limitation | Detail |
+|---|---|
+| Native ETH → token via KeeperHub | Universal Router requires payable `msg.value`. KeeperHub Direct Execution simulation did not forward `msg.value` in the tested path. ERC20 → token path via Permit2 works. Documented in `FEEDBACK.md`. |
+| Sepolia liquidity | Some Uniswap routes on Sepolia return "No quotes available." Production use on mainnet or Base has better routing. |
+| Text record gas | Writing 10+ text records costs gas per transaction. Production use should batch with `setRecords` via the multicall resolver. |
+| Agent persistence | Created agents persist in `localStorage`. A production version would use onchain indexing for cross-device discovery. |
+| KeeperHub dashboard links | KeeperHub dashboard run pages are private to the organization. AgentOS shows public Etherscan proof plus KeeperHub run IDs. |
+
+---
+
+## Environment Variables
+
+```bash
+# Required for full demo
+OPENAI_API_KEY=
+UNISWAP_API_KEY=
+KEEPERHUB_API_KEY=                  # Must be kh_ org key for REST + MCP
+SEPOLIA_RPC_URL=
+NEXT_PUBLIC_WALLETCONNECT_ID=
+
+# Optional — only for redeploying contracts
+DEPLOYER_PRIVATE_KEY=
+AGENT_EXECUTOR_PRIVATE_KEY=         # Backend scoped executor — not an agent owner key
+
+# Contract addresses — already set from deployments/sepolia.json
 ERC8004_IDENTITY_REGISTRY_ADDRESS=0xB7dd5B72bF248806F63d645a6bDaFfDb053f4300
 ERC8004_REPUTATION_REGISTRY_ADDRESS=0xe7f6b315cA9d49bA1aEcA516311a043542A2d161
 ERC8004_VALIDATION_REGISTRY_ADDRESS=0x3C5E64A4f0fc23C4205AC5a5D281Ecab06Ee57D9
 AGENT_REGISTRY_ADDRESS=0x4180F328e2600E8b846e13A1EFe85D21690C6e55
 AGENT_WALLET_FACTORY_ADDRESS=0x75C553505C7912377E08e4B9b2c824D722a704CB
 AGENT_SUBNAME_REGISTRAR_ADDRESS=0x3ccF94F8B4E5Dd6886A7cbcb2f3C52482dA4ff9E
+NEXT_PUBLIC_AGENT_SUBNAME_REGISTRAR_ADDRESS=0x3ccF94F8B4E5Dd6886A7cbcb2f3C52482dA4ff9E
 ```
 
-Deployment metadata is also stored in [`deployments/sepolia.json`](deployments/sepolia.json).
+---
 
-## Project Structure
+## Team
 
-```text
-packages/frontend   Next.js landing page and dashboard
-packages/backend    Express API, OpenAI tools, ENS, Uniswap, KeeperHub adapters
-packages/contracts  Agent smart wallets, registry, ERC-8004-style contracts
-```
+Built at ETHGlobal Open Agents 2026.
 
-## Environment
-
-Copy `.env.example` to `.env` and fill the values.
-
-Required for the full demo:
-
-- `OPENAI_API_KEY`
-- `UNISWAP_API_KEY`
-- `KEEPERHUB_API_KEY` with `kh_` organization-key prefix
-- `SEPOLIA_RPC_URL`
-- `NEXT_PUBLIC_WALLETCONNECT_ID`
-- `DEPLOYER_PRIVATE_KEY` only when redeploying contracts
-- `AGENT_EXECUTOR_PRIVATE_KEY` for the backend executor address allowed by agent smart wallets
-
-Normal users do not need to expose private keys to the server. The connected wallet signs agent wallet creation, ERC-8004 identity registration, and AgentFi registry registration directly from the frontend.
-
-## ENS Subname Registrar
-
-To let any connected wallet mint `name.agentos.eth` without a backend private key:
-
-1. Set `ENS_RESOLVER_ADDRESS` to the Sepolia Public Resolver used by `agentos.eth`.
-2. Deploy the registrar:
-
-```bash
-cd packages/contracts
-npm run deploy:registrar:sepolia
-```
-
-3. Copy the printed `AGENT_SUBNAME_REGISTRAR_ADDRESS` into `.env` and `NEXT_PUBLIC_AGENT_SUBNAME_REGISTRAR_ADDRESS` into `packages/frontend/.env.local` if used.
-4. In the Sepolia ENS app, open `agentos.eth` -> Ownership -> Edit roles, and set the registrar contract as the manager/controller allowed to create subnames.
-
-After that, the frontend deployment flow mints the smart wallet, creates the real ENS subname, writes resolver records, mints ERC-8004 identity, and indexes the agent.
-
-Never commit `.env`.
-
-## Run Locally
-
-Install dependencies in each package if needed:
-
-```bash
-npm install
-cd packages/backend && npm install --workspaces=false
-cd ../frontend && npm install --workspaces=false
-cd ../contracts && npm install --workspaces=false
-```
-
-Build everything:
-
-```bash
-npm run build
-```
-
-Run backend:
-
-```bash
-cd packages/backend
-npm run dev
-```
-
-Run frontend:
-
-```bash
-cd packages/frontend
-npm run dev
-```
-
-Open:
-
-```text
-http://localhost:3000
-http://localhost:3001/health
-```
-
-## Sponsor Alignment
-
-**Uniswap:** real Trading API integration for quote/swap/order flows and agent-to-agent payments.
-
-**ENS:** subnames, text records, reputation, and agent discovery without a central database.
-
-**KeeperHub:** execution layer for workflows, transaction reliability, status, logs, and automation.
-
-**ERC-8004:** onchain identity, feedback, and validation registries for trustless AI agents.
+**License:** MIT

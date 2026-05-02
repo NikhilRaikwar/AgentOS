@@ -1,14 +1,56 @@
-import { isAddress, isHex, type Address } from "viem";
+import { isAddress, isHex, parseUnits, type Address } from "viem";
 import { config } from "./config.js";
 
 export const ETH_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
 export const TOKENS: Record<string, Address> = {
   ETH: ETH_ADDRESS,
   WETH_MAINNET: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-  USDC_MAINNET: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+  USDC_MAINNET: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+  WETH_SEPOLIA: "0xfff9976782d46cc05630d1f6ebab18b2324d6b14",
+  USDC_SEPOLIA: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238"
 };
 
 type Json = Record<string, unknown>;
+
+const tokenSymbolsByChain: Record<number, Record<string, Address>> = {
+  1: {
+    ETH: TOKENS.ETH,
+    WETH: TOKENS.WETH_MAINNET,
+    USDC: TOKENS.USDC_MAINNET
+  },
+  11155111: {
+    ETH: TOKENS.ETH,
+    WETH: TOKENS.WETH_SEPOLIA,
+    USDC: TOKENS.USDC_SEPOLIA
+  }
+};
+
+const tokenDecimalsByAddress: Record<string, number> = {
+  [TOKENS.ETH.toLowerCase()]: 18,
+  [TOKENS.WETH_MAINNET.toLowerCase()]: 18,
+  [TOKENS.USDC_MAINNET.toLowerCase()]: 6,
+  [TOKENS.WETH_SEPOLIA.toLowerCase()]: 18,
+  [TOKENS.USDC_SEPOLIA.toLowerCase()]: 6
+};
+
+export function resolveTokenAddress(token: string | undefined, chainId: number, fallback: Address): Address {
+  if (!token) return fallback;
+  if (isAddress(token)) return token;
+  const symbol = token.trim().toUpperCase();
+  const resolved = tokenSymbolsByChain[chainId]?.[symbol] || tokenSymbolsByChain[1]?.[symbol];
+  if (!resolved) throw new Error(`Unsupported token "${token}" on chain ${chainId}`);
+  return resolved;
+}
+
+export function normalizeTokenAmount(amount: string, token: Address) {
+  const clean = amount.trim();
+  if (!clean) throw new Error("Quote amount is required");
+  const decimals = tokenDecimalsByAddress[token.toLowerCase()] ?? 18;
+  if (clean.includes(".")) return parseUnits(clean, decimals).toString();
+  if (!/^\d+$/.test(clean)) throw new Error(`Invalid token amount "${amount}"`);
+  if (clean.length <= decimals) return parseUnits(clean, decimals).toString();
+  return clean;
+}
 
 async function uniswapFetch(path: string, body?: Json, method = "POST") {
   if (!config.uniswapApiKey) throw new Error("UNISWAP_API_KEY is not configured");

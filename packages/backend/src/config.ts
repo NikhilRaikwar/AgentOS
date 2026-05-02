@@ -7,7 +7,7 @@ import path from "node:path";
   "../../../.env",
   "../.env"
 ].forEach((envPath) => {
-  dotenv.config({ path: path.resolve(process.cwd(), envPath), override: false });
+  dotenv.config({ path: path.resolve(process.cwd(), envPath), override: true });
 });
 
 export const config = {

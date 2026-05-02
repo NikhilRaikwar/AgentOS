@@ -6,8 +6,14 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
   decodeEventLog,
+  decodeFunctionData,
+  formatEther,
+  formatUnits,
   isAddress,
   namehash,
+  parseAbiItem,
+  parseEther,
+  parseUnits,
   stringToHex,
   type Address,
   type Hex
@@ -16,14 +22,40 @@ import { sepolia } from "wagmi/chains";
 import { useAccount, usePublicClient, useSwitchChain, useWalletClient } from "wagmi";
 import {
   agentRegistryAbi,
+  agentSmartWalletAbi,
   agentSubnameRegistrarAbi,
   agentWalletFactoryAbi,
+  ensPublicResolverAbi,
   identityRegistryAbi,
   sepoliaContracts
 } from "../lib/contracts";
 
 const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 const parentEnsName = process.env.NEXT_PUBLIC_PARENT_ENS_NAME || "agentos.eth";
+const logLookbackBlocks = BigInt(process.env.NEXT_PUBLIC_AGENT_LOG_LOOKBACK_BLOCKS || "5000");
+const logChunkSize = BigInt(process.env.NEXT_PUBLIC_AGENT_LOG_CHUNK_BLOCKS || "5000");
+const sepoliaUsdc = "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238" as const;
+const permit2Address = "0x000000000022D473030F116dDEE9F6B43aC78BA3" as const;
+const universalRouterSepolia = "0x3A9D48AB9751398BbFa63ad67599Bb04e4BdF98b" as const;
+const erc20TransferAbi = [
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }]
+  },
+  {
+    type: "function",
+    name: "transfer",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "to", type: "address" },
+      { name: "amount", type: "uint256" }
+    ],
+    outputs: [{ name: "", type: "bool" }]
+  }
+] as const;
 
 type Health = {
   chainId: number;
@@ -31,7 +63,13 @@ type Health = {
   executorAddress: Address | null;
   openai: boolean;
   uniswap: boolean;
-  keeperhub: { ok: boolean; status?: number; message?: string };
+  keeperhub: {
+    ok: boolean;
+    status?: number;
+    message?: string;
+    error?: string;
+    result?: { walletAddress?: Address };
+  };
   contracts: Record<string, Address>;
 };
 
@@ -51,13 +89,29 @@ type CreatedAgent = {
   preferredToken: string;
   endpoint: string;
   records: Record<string, string>;
-  identityTx: Hex;
-  factoryTx: Hex;
-  registryTx: Hex;
+  identityTx?: Hex;
+  factoryTx?: Hex;
+  registryTx?: Hex;
   ensTx?: Hex;
 };
 
-type DashboardPage = "dashboard" | "agents" | "executions" | "ens";
+type AgentRegistrarLog = Awaited<ReturnType<NonNullable<ReturnType<typeof usePublicClient>>["getLogs"]>>[number];
+type WalletActivity = {
+  txHash: Hex;
+  target: Address;
+  value: string;
+  action: string;
+  detail: string;
+};
+
+type ExecutionProof = {
+  agentEnsName: string;
+  approval?: { keeperHubRunId?: string; txHash?: Hex } | null;
+  permit?: { keeperHubRunId?: string; txHash?: Hex } | null;
+  swap?: { keeperHubRunId?: string; txHash?: Hex } | null;
+};
+
+type DashboardPage = "dashboard" | "agents" | "activity" | "ens";
 
 const initialSteps: DeployStep[] = [
   { label: "Create user-owned agent smart wallet", status: "idle" },
@@ -66,8 +120,153 @@ const initialSteps: DeployStep[] = [
   { label: "Register agent in AgentFi registry", status: "idle" }
 ];
 
+const agentSubnameRegisteredEvent = parseAbiItem(
+  "event AgentSubnameRegistered(string indexed label,string ensName,bytes32 indexed node,address indexed owner,address wallet)"
+);
+
+const agentSmartWalletExecutedEvent = parseAbiItem(
+  "event Executed(address indexed target,uint256 value,bytes data,bytes result)"
+);
+
+const erc20ApproveAbi = [
+  {
+    type: "function",
+    name: "approve",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "spender", type: "address" },
+      { name: "amount", type: "uint256" }
+    ],
+    outputs: [{ name: "", type: "bool" }]
+  }
+] as const;
+
+const permit2ApproveAbi = [
+  {
+    type: "function",
+    name: "approve",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "spender", type: "address" },
+      { name: "amount", type: "uint160" },
+      { name: "expiration", type: "uint48" }
+    ],
+    outputs: []
+  }
+] as const;
+
+const universalRouterExecuteAbi = [
+  {
+    type: "function",
+    name: "execute",
+    stateMutability: "payable",
+    inputs: [
+      { name: "commands", type: "bytes" },
+      { name: "inputs", type: "bytes[]" },
+      { name: "deadline", type: "uint256" }
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
+    name: "execute",
+    stateMutability: "payable",
+    inputs: [
+      { name: "commands", type: "bytes" },
+      { name: "inputs", type: "bytes[]" }
+    ],
+    outputs: []
+  }
+] as const;
+
+const agentRecordKeys = [
+  "specialty",
+  "fee",
+  "preferred_token",
+  "endpoint",
+  "model",
+  "reputation",
+  "tasks_done",
+  "framework",
+  "keeperhub",
+  "wallet_type",
+  "agentos.owner",
+  "agentos.wallet",
+  "agentos.framework",
+  "agentos.lastExecutionTx",
+  "agentos.lastKeeperHubRun",
+  "agentos.reputation"
+];
+
 function txLink(hash?: Hex) {
   return hash ? `https://sepolia.etherscan.io/tx/${hash}` : "#";
+}
+
+function ensAppLink(name: string) {
+  return `https://sepolia.app.ens.domains/${encodeURIComponent(name)}`;
+}
+
+function proofCacheKey(owner?: Address) {
+  return `agentos.proofs.${owner?.toLowerCase() || "anonymous"}`;
+}
+
+function readProofCache(owner?: Address) {
+  if (typeof window === "undefined") return {} as Record<string, Partial<CreatedAgent>>;
+  try {
+    return JSON.parse(window.localStorage.getItem(proofCacheKey(owner)) || "{}") as Record<string, Partial<CreatedAgent>>;
+  } catch {
+    return {} as Record<string, Partial<CreatedAgent>>;
+  }
+}
+
+function writeProofCache(owner: Address | undefined, agents: CreatedAgent[]) {
+  if (typeof window === "undefined") return;
+  const existing = readProofCache(owner);
+  const next = { ...existing };
+  agents.forEach((created) => {
+    next[created.ensName] = {
+      factoryTx: created.factoryTx || next[created.ensName]?.factoryTx,
+      ensTx: created.ensTx || next[created.ensName]?.ensTx,
+      identityTx: created.identityTx || next[created.ensName]?.identityTx,
+      registryTx: created.registryTx || next[created.ensName]?.registryTx
+    };
+  });
+  window.localStorage.setItem(proofCacheKey(owner), JSON.stringify(next));
+}
+
+function displayRecordKey(key: string) {
+  return key === "endpoint" ? "runtime_endpoint" : key;
+}
+
+function displayRecordValue(key: string, value: string) {
+  if (key !== "endpoint") return value;
+  try {
+    const url = new URL(value);
+    if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+      return "Local runtime endpoint configured";
+    }
+    return `${url.origin}/...`;
+  } catch {
+    return "Runtime endpoint configured";
+  }
+}
+
+function renderMessageText(text: string) {
+  const urlPattern = /(https?:\/\/[^\s)]+)/g;
+  return text.split("\n").map((line, lineIndex) => (
+    <span key={`line-${lineIndex}`}>
+      {line.split(urlPattern).map((part, partIndex) => {
+        if (urlPattern.test(part)) {
+          urlPattern.lastIndex = 0;
+          return <a className="proof-link" href={part} target="_blank" rel="noreferrer" key={`${lineIndex}-${partIndex}`}>{part}</a>;
+        }
+        urlPattern.lastIndex = 0;
+        return part;
+      })}
+      {lineIndex < text.split("\n").length - 1 ? <br /> : null}
+    </span>
+  ));
 }
 
 function shortAddress(value?: string | null) {
@@ -76,6 +275,71 @@ function shortAddress(value?: string | null) {
 
 function cleanName(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 32);
+}
+
+function describeWalletActivity(target: Address, data: Hex, value: string) {
+  const targetLower = target.toLowerCase();
+  const valueLabel = value === "0" ? "No native ETH value" : `${value} wei native value`;
+
+  if (targetLower === sepoliaUsdc.toLowerCase()) {
+    try {
+      const decoded = decodeFunctionData({ abi: erc20ApproveAbi, data });
+      if (decoded.functionName === "approve") {
+        const spender = decoded.args[0];
+        const spenderName = spender.toLowerCase() === permit2Address.toLowerCase()
+          ? "Permit2"
+          : shortAddress(spender);
+        return {
+          action: "USDC approval for Permit2",
+          detail: `Approved ${spenderName} to spend Sepolia USDC from this agent wallet`
+        };
+      }
+    } catch {
+      // Fall through to the generic target label.
+    }
+    return { action: "Sepolia USDC contract call", detail: valueLabel };
+  }
+
+  if (targetLower === permit2Address.toLowerCase()) {
+    try {
+      const decoded = decodeFunctionData({ abi: permit2ApproveAbi, data });
+      if (decoded.functionName === "approve") {
+        const token = decoded.args[0];
+        const spender = decoded.args[1];
+        const tokenName = token.toLowerCase() === sepoliaUsdc.toLowerCase() ? "USDC" : shortAddress(token);
+        const spenderName = spender.toLowerCase() === universalRouterSepolia.toLowerCase()
+          ? "Universal Router"
+          : shortAddress(spender);
+        return {
+          action: "Permit2 router approval",
+          detail: `Approved ${spenderName} to route ${tokenName} for this agent`
+        };
+      }
+    } catch {
+      // Fall through to the generic target label.
+    }
+    return { action: "Permit2 contract call", detail: valueLabel };
+  }
+
+  if (targetLower === universalRouterSepolia.toLowerCase()) {
+    try {
+      const decoded = decodeFunctionData({ abi: universalRouterExecuteAbi, data });
+      if (decoded.functionName === "execute") {
+        return {
+          action: "Uniswap swap execution",
+          detail: "Universal Router executed the prepared Uniswap swap calldata"
+        };
+      }
+    } catch {
+      // Fall through to the generic target label.
+    }
+    return { action: "Uniswap Universal Router call", detail: valueLabel };
+  }
+
+  return {
+    action: `Smart-wallet call to ${shortAddress(target)}`,
+    detail: valueLabel
+  };
 }
 
 function updateStep(steps: DeployStep[], index: number, patch: Partial<DeployStep>) {
@@ -89,7 +353,7 @@ export function Dashboard() {
   const publicClient = usePublicClient({ chainId: sepolia.id });
   const { switchChainAsync } = useSwitchChain();
   const [health, setHealth] = useState<Health | null>(null);
-  const [healthError, setHealthError] = useState("");
+  const [, setHealthError] = useState("");
   const [agent, setAgent] = useState("");
   const [messages, setMessages] = useState([{ role: "agent", text: "Deploy or select a real ENS-named agent to start the OpenAI + Uniswap + KeeperHub runtime." }]);
   const [input, setInput] = useState("");
@@ -103,7 +367,20 @@ export function Dashboard() {
   const [deploySteps, setDeploySteps] = useState(initialSteps);
   const [createdAgents, setCreatedAgents] = useState<CreatedAgent[]>([]);
   const [page, setPage] = useState<DashboardPage>("dashboard");
-  const [storageReady, setStorageReady] = useState(false);
+  const [agentsLoading, setAgentsLoading] = useState(false);
+  const [agentsLoadError, setAgentsLoadError] = useState("");
+  const [fundEthAmount, setFundEthAmount] = useState("0.005");
+  const [fundUsdcAmount, setFundUsdcAmount] = useState("1");
+  const [fundStatus, setFundStatus] = useState("");
+  const [authorizeStatus, setAuthorizeStatus] = useState("");
+  const [authorizing, setAuthorizing] = useState(false);
+  const [executionAuthorized, setExecutionAuthorized] = useState(false);
+  const [agentEthBalance, setAgentEthBalance] = useState("");
+  const [agentUsdcBalance, setAgentUsdcBalance] = useState("");
+  const [walletActivities, setWalletActivities] = useState<WalletActivity[]>([]);
+  const [walletActivityError, setWalletActivityError] = useState("");
+  const [lastExecutionProof, setLastExecutionProof] = useState<ExecutionProof | null>(null);
+  const [ensProofStatus, setEnsProofStatus] = useState("");
 
   const selectedCreatedAgent = createdAgents.find((item) => item.ensName === agent) || createdAgents[0];
   const selectedRecords = selectedCreatedAgent?.records || {};
@@ -111,9 +388,10 @@ export function Dashboard() {
     ? selectedCreatedAgent.ensName.replace(`.${parentEnsName}`, "")
     : cleanName(deployName) || "agent";
   const agentName = `${cleanName(deployName) || "agent"}.${parentEnsName}`;
+  const deployComplete = deploySteps.every((step) => step.status === "done");
 
   const metrics = useMemo(() => [
-    ["Real Agents", `${createdAgents.length}`, "wallet-owned deployments in this browser"],
+    ["Real Agents", `${createdAgents.length}`, "loaded from Sepolia logs + ENS records"],
     ["ENS Namespace", parentEnsName, "subnames resolve capabilities and wallets"],
     ["Runtime Tools", "3", "ENS discovery, Uniswap quote, KeeperHub execution"],
     ["Owner Wallet", address ? shortAddress(address) : "Connect", "new agents are owned by the connected wallet"]
@@ -122,38 +400,99 @@ export function Dashboard() {
   const titleByPage: Record<DashboardPage, string> = {
     dashboard: "Dashboard",
     agents: "Agent Directory",
-    executions: "Execution Feed",
+    activity: "Wallet Activity",
     ens: "ENS Records"
   };
 
   useEffect(() => {
-    if (!isConnected) router.push("/");
-  }, [isConnected, router]);
+    if (!isConnected || !address) router.replace("/");
+  }, [address, isConnected, router]);
 
-  useEffect(() => {
-    const saved = window.localStorage.getItem("agentos.createdAgents");
-    if (!saved) {
-      setStorageReady(true);
+  async function readAgentTextRecords(ensName: string) {
+    const entries = await Promise.all(agentRecordKeys.map(async (key) => {
+      try {
+        const value = await publicClient?.getEnsText({ name: ensName, key });
+        return value ? [key, value] as const : null;
+      } catch {
+        return null;
+      }
+    }));
+    return Object.fromEntries(entries.filter(Boolean) as Array<readonly [string, string]>);
+  }
+
+  async function loadAgentsFromChain() {
+    if (!address || !publicClient) {
+      setCreatedAgents([]);
       return;
     }
+
+    setAgentsLoading(true);
+    setAgentsLoadError("");
     try {
-      const parsed = JSON.parse(saved) as CreatedAgent[];
-      setCreatedAgents(parsed);
-      if (parsed[0]?.ensName) {
-        setAgent(parsed[0].ensName);
-        setMessages([{ role: "agent", text: `Runtime loaded for ${parsed[0].ensName}. I can resolve ENS records, request Uniswap quotes, and prepare KeeperHub execution.` }]);
+      const latestBlock = await publicClient.getBlockNumber();
+      const startBlock = latestBlock > logLookbackBlocks ? latestBlock - logLookbackBlocks : 0n;
+      const logs: AgentRegistrarLog[] = [];
+
+      for (let fromBlock = startBlock; fromBlock <= latestBlock; fromBlock += logChunkSize + 1n) {
+        const toBlock = fromBlock + logChunkSize > latestBlock ? latestBlock : fromBlock + logChunkSize;
+        const chunk = await publicClient.getLogs({
+          address: sepoliaContracts.subnameRegistrar,
+          event: agentSubnameRegisteredEvent,
+          args: { owner: address },
+          fromBlock,
+          toBlock
+        });
+        logs.push(...chunk);
       }
-    } catch {
-      window.localStorage.removeItem("agentos.createdAgents");
+
+      const agents = await Promise.all(logs.reverse().map(async (log) => {
+        const decoded = decodeEventLog({
+          abi: agentSubnameRegistrarAbi,
+          data: log.data,
+          topics: log.topics
+        });
+        if (decoded.eventName !== "AgentSubnameRegistered") return null;
+        const records = await readAgentTextRecords(decoded.args.ensName);
+        return {
+          ensName: decoded.args.ensName,
+          smartWallet: decoded.args.wallet,
+          owner: decoded.args.owner,
+          specialty: records.specialty || "unknown",
+          fee: records.fee || "not set",
+          preferredToken: records.preferred_token || "not set",
+          endpoint: records.endpoint || `${apiUrl}/agents/${decoded.args.ensName.replace(`.${parentEnsName}`, "")}/run`,
+          records,
+          ensTx: log.transactionHash || undefined
+        } satisfies CreatedAgent;
+      }));
+
+      const cachedProofs = readProofCache(address);
+      const nextAgents = (agents.filter(Boolean) as CreatedAgent[]).map((created) => {
+        const cached = cachedProofs[created.ensName] || {};
+        return {
+          ...created,
+          factoryTx: (cached.factoryTx as Hex | undefined) || created.factoryTx,
+          ensTx: (cached.ensTx as Hex | undefined) || created.ensTx,
+          identityTx: (cached.identityTx as Hex | undefined) || created.identityTx,
+          registryTx: (cached.registryTx as Hex | undefined) || created.registryTx
+        };
+      });
+      setCreatedAgents(nextAgents);
+      if (nextAgents[0]?.ensName && !agent) {
+        setAgent(nextAgents[0].ensName);
+        setMessages([{ role: "agent", text: `Runtime loaded for ${nextAgents[0].ensName} from Sepolia ENS records. I can resolve ENS, request Uniswap quotes, and prepare KeeperHub execution.` }]);
+      }
+    } catch (error) {
+      setAgentsLoadError(error instanceof Error ? error.message : String(error));
     } finally {
-      setStorageReady(true);
+      setAgentsLoading(false);
     }
-  }, []);
+  }
 
   useEffect(() => {
-    if (!storageReady) return;
-    window.localStorage.setItem("agentos.createdAgents", JSON.stringify(createdAgents));
-  }, [createdAgents, storageReady]);
+    loadAgentsFromChain();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [address, publicClient]);
 
   useEffect(() => {
     let cancelled = false;
@@ -174,12 +513,140 @@ export function Dashboard() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function checkAuthorization() {
+      setExecutionAuthorized(false);
+      if (!publicClient || !selectedCreatedAgent) return;
+      const executionCaller = health?.keeperhub?.result?.walletAddress && isAddress(health.keeperhub.result.walletAddress)
+        ? health.keeperhub.result.walletAddress
+        : health?.executorAddress;
+      if (!executionCaller || !isAddress(executionCaller)) return;
+
+      try {
+        const [currentExecutor, usdcAllowed, permitAllowed, routerAllowed] = await Promise.all([
+          publicClient.readContract({
+            address: selectedCreatedAgent.smartWallet,
+            abi: agentSmartWalletAbi,
+            functionName: "executor"
+          }),
+          publicClient.readContract({
+            address: selectedCreatedAgent.smartWallet,
+            abi: agentSmartWalletAbi,
+            functionName: "allowedTargets",
+            args: [sepoliaUsdc]
+          }),
+          publicClient.readContract({
+            address: selectedCreatedAgent.smartWallet,
+            abi: agentSmartWalletAbi,
+            functionName: "allowedTargets",
+            args: [permit2Address]
+          }),
+          publicClient.readContract({
+            address: selectedCreatedAgent.smartWallet,
+            abi: agentSmartWalletAbi,
+            functionName: "allowedTargets",
+            args: [universalRouterSepolia]
+          })
+        ]);
+        const ok = currentExecutor.toLowerCase() === executionCaller.toLowerCase()
+          && usdcAllowed
+          && permitAllowed
+          && routerAllowed;
+        if (!cancelled) {
+          setExecutionAuthorized(ok);
+          if (ok) setAuthorizeStatus("Execution authorized. KeeperHub can route confirmed swaps through this agent wallet.");
+        }
+      } catch {
+        if (!cancelled) setExecutionAuthorized(false);
+      }
+    }
+    checkAuthorization();
+    return () => {
+      cancelled = true;
+    };
+  }, [health, publicClient, selectedCreatedAgent]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadWalletActivity() {
+      setWalletActivityError("");
+      setWalletActivities([]);
+      setAgentEthBalance("");
+      setAgentUsdcBalance("");
+      if (!publicClient || !selectedCreatedAgent) return;
+
+      try {
+        const [ethBalance, usdcBalance, latestBlock] = await Promise.all([
+          publicClient.getBalance({ address: selectedCreatedAgent.smartWallet }),
+          publicClient.readContract({
+            address: sepoliaUsdc,
+            abi: erc20TransferAbi,
+            functionName: "balanceOf",
+            args: [selectedCreatedAgent.smartWallet]
+          }),
+          publicClient.getBlockNumber()
+        ]);
+
+        const startBlock = latestBlock > logLookbackBlocks ? latestBlock - logLookbackBlocks : 0n;
+        const logs: AgentRegistrarLog[] = [];
+        for (let fromBlock = startBlock; fromBlock <= latestBlock; fromBlock += logChunkSize + 1n) {
+          const toBlock = fromBlock + logChunkSize > latestBlock ? latestBlock : fromBlock + logChunkSize;
+          const chunk = await publicClient.getLogs({
+            address: selectedCreatedAgent.smartWallet,
+            event: agentSmartWalletExecutedEvent,
+            fromBlock,
+            toBlock
+          });
+          logs.push(...chunk);
+        }
+
+        const activities = logs.reverse().map((log) => {
+          if (!log.transactionHash) return null;
+          const decoded = decodeEventLog({
+            abi: agentSmartWalletAbi,
+            data: log.data,
+            topics: log.topics
+          });
+          if (decoded.eventName !== "Executed") return null;
+          const description = describeWalletActivity(
+            decoded.args.target,
+            decoded.args.data as Hex,
+            decoded.args.value.toString()
+          );
+          return {
+            txHash: log.transactionHash,
+            target: decoded.args.target,
+            value: decoded.args.value.toString(),
+            action: description.action,
+            detail: description.detail
+          } satisfies WalletActivity;
+        }).filter(Boolean) as WalletActivity[];
+
+        if (!cancelled) {
+          setAgentEthBalance(`${Number(formatEther(ethBalance)).toFixed(5)} ETH`);
+          setAgentUsdcBalance(`${Number(formatUnits(usdcBalance, 6)).toFixed(4)} USDC`);
+          setWalletActivities(activities);
+        }
+      } catch (error) {
+        if (!cancelled) setWalletActivityError(error instanceof Error ? error.message : String(error));
+      }
+    }
+    loadWalletActivity();
+    const timer = setInterval(loadWalletActivity, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [publicClient, selectedCreatedAgent]);
+
   async function sendMessage(text = input) {
     if (!text.trim()) return;
     if (!selectedCreatedAgent) {
       setMessages((prev) => [...prev, { role: "agent", text: "Create a real agent first. The runtime is intentionally disabled until there is an ENS subname and smart wallet to operate as." }]);
       return;
     }
+    const priorMessages = messages;
     setInput("");
     setMessages((prev) => [...prev, { role: "user", text }]);
 
@@ -187,9 +654,20 @@ export function Dashboard() {
       const res = await fetch(`${apiUrl}/agents/${selectedAgentLabel}/run`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message: text, walletAddress: address })
+        body: JSON.stringify({
+          message: text,
+          walletAddress: selectedCreatedAgent?.smartWallet || address,
+          history: priorMessages.slice(-8).map((msg) => ({
+            role: msg.role,
+            text: msg.text
+          }))
+        })
       });
       const data = await res.json();
+      if (data.executionProof?.swap?.txHash) {
+        setLastExecutionProof(data.executionProof as ExecutionProof);
+        setEnsProofStatus("Swap proof is ready. Write it to ENS so the agent name carries public execution memory.");
+      }
       setMessages((prev) => [
         ...prev,
         {
@@ -205,7 +683,155 @@ export function Dashboard() {
 
   function selectAgent(next: CreatedAgent) {
     setAgent(next.ensName);
+    setFundStatus("");
+    setAuthorizeStatus("");
+    setEnsProofStatus("");
+    setLastExecutionProof(null);
+    setExecutionAuthorized(false);
     setMessages([{ role: "agent", text: `I am ${next.ensName}. My ENS records say specialty=${next.specialty}, fee=${next.fee}, preferred token=${next.preferredToken}.` }]);
+  }
+
+  async function ensureSepolia() {
+    if (chainId !== sepolia.id) await switchChainAsync({ chainId: sepolia.id });
+  }
+
+  async function fundAgentEth() {
+    if (!walletClient || !publicClient || !selectedCreatedAgent) return;
+    setFundStatus("Waiting for wallet signature to fund agent with Sepolia ETH...");
+    try {
+      await ensureSepolia();
+      const hash = await walletClient.sendTransaction({
+        to: selectedCreatedAgent.smartWallet,
+        value: parseEther(fundEthAmount)
+      });
+      setFundStatus(`ETH funding submitted: ${hash}`);
+      await publicClient.waitForTransactionReceipt({ hash });
+      setFundStatus(`ETH funding confirmed: ${hash}`);
+    } catch (error) {
+      setFundStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function fundAgentUsdc() {
+    if (!walletClient || !publicClient || !selectedCreatedAgent) return;
+    setFundStatus("Waiting for wallet signature to transfer Sepolia USDC...");
+    try {
+      await ensureSepolia();
+      const hash = await walletClient.writeContract({
+        address: sepoliaUsdc,
+        abi: erc20TransferAbi,
+        functionName: "transfer",
+        args: [selectedCreatedAgent.smartWallet, parseUnits(fundUsdcAmount, 6)]
+      });
+      setFundStatus(`USDC funding submitted: ${hash}`);
+      await publicClient.waitForTransactionReceipt({ hash });
+      setFundStatus(`USDC funding confirmed: ${hash}`);
+    } catch (error) {
+      setFundStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function authorizeExecution() {
+    if (!walletClient || !publicClient || !selectedCreatedAgent) return;
+    if (executionAuthorized) {
+      setAuthorizeStatus("Already authorized. No more wallet signatures needed for this agent unless you change executor or contracts.");
+      return;
+    }
+    const executionCaller = health?.keeperhub?.result?.walletAddress && isAddress(health.keeperhub.result.walletAddress)
+      ? health.keeperhub.result.walletAddress
+      : health?.executorAddress;
+    if (!executionCaller || !isAddress(executionCaller)) {
+      setAuthorizeStatus("No KeeperHub or executor wallet is available from backend health.");
+      return;
+    }
+
+    setAuthorizing(true);
+    setAuthorizeStatus("Switching to Sepolia and preparing agent wallet permissions...");
+    try {
+      await ensureSepolia();
+
+      setAuthorizeStatus(`Setting agent executor to ${shortAddress(executionCaller)}...`);
+      const executorTx = await walletClient.writeContract({
+        address: selectedCreatedAgent.smartWallet,
+        abi: agentSmartWalletAbi,
+        functionName: "setExecutor",
+        args: [executionCaller]
+      });
+      await publicClient.waitForTransactionReceipt({ hash: executorTx });
+
+      const targets = [
+        ["Sepolia USDC", sepoliaUsdc],
+        ["Permit2", permit2Address],
+        ["Universal Router", universalRouterSepolia]
+      ] as const;
+
+      for (const [label, target] of targets) {
+        setAuthorizeStatus(`Authorizing ${label} target...`);
+        const tx = await walletClient.writeContract({
+          address: selectedCreatedAgent.smartWallet,
+          abi: agentSmartWalletAbi,
+          functionName: "setAllowedTarget",
+          args: [target, true]
+        });
+        await publicClient.waitForTransactionReceipt({ hash: tx });
+      }
+
+      setExecutionAuthorized(true);
+      setAuthorizeStatus("Execution authorized. The next confirmed quote can be routed through the agent smart wallet.");
+    } catch (error) {
+      setAuthorizeStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAuthorizing(false);
+    }
+  }
+
+  async function writeExecutionProofToEns() {
+    if (!walletClient || !publicClient || !selectedCreatedAgent || !lastExecutionProof?.swap?.txHash) return;
+    const swapTx = lastExecutionProof.swap.txHash;
+    const runId = lastExecutionProof.swap.keeperHubRunId || "";
+    const currentRep = Number(selectedCreatedAgent.records.reputation || "50");
+    const nextRep = String(Math.min(100, currentRep + 1));
+    const node = namehash(selectedCreatedAgent.ensName);
+
+    setEnsProofStatus("Waiting for wallet signatures to write latest execution proof into ENS text records...");
+    try {
+      await ensureSepolia();
+      const records = [
+        ["agentos.lastExecutionTx", swapTx],
+        ["agentos.lastKeeperHubRun", runId],
+        ["agentos.reputation", nextRep],
+        ["reputation", nextRep]
+      ] as const;
+
+      for (const [key, value] of records) {
+        if (!value) continue;
+        const hash = await walletClient.writeContract({
+          address: sepoliaContracts.resolver,
+          abi: ensPublicResolverAbi,
+          functionName: "setText",
+          args: [node, key, value]
+        });
+        setEnsProofStatus(`Writing ${key} to ENS: ${hash}`);
+        await publicClient.waitForTransactionReceipt({ hash });
+      }
+
+      setCreatedAgents((agents) => agents.map((created) => created.ensName === selectedCreatedAgent.ensName
+        ? {
+          ...created,
+          records: {
+            ...created.records,
+            "agentos.lastExecutionTx": swapTx,
+            "agentos.lastKeeperHubRun": runId,
+            "agentos.reputation": nextRep,
+            reputation: nextRep
+          }
+        }
+        : created
+      ));
+      setEnsProofStatus(`ENS updated: ${selectedCreatedAgent.ensName} now stores the latest swap tx, KeeperHub run ID, and reputation ${nextRep}.`);
+    } catch (error) {
+      setEnsProofStatus(error instanceof Error ? error.message : String(error));
+    }
   }
 
   async function deployAgent() {
@@ -362,9 +988,12 @@ export function Dashboard() {
         registryTx,
         ensTx
       };
-      setCreatedAgents((prev) => [{
-        ...createdAgent
-      }, ...prev]);
+      setCreatedAgents((prev) => {
+        const nextAgents = [createdAgent, ...prev.filter((item) => item.ensName !== ensName)];
+        writeProofCache(address, nextAgents);
+        return nextAgents;
+      });
+      await loadAgentsFromChain();
       setAgent(ensName);
       setMessages([{ role: "agent", text: `${ensName} is live. ENS records are written and this runtime can now request quotes and prepare execution for that real agent.` }]);
     } catch (error) {
@@ -390,28 +1019,20 @@ export function Dashboard() {
           {[
             ["dashboard", "D", "Dashboard"],
             ["agents", "A", "Agents"],
+            ["search", "S", "Search Agents"],
             ["deploy", "+", "Deploy Agent"],
-            ["executions", "X", "Executions"],
+            ["activity", "W", "Wallet Activity"],
             ["ens", "E", "ENS Records"]
           ].map(([key, icon, label]) => (
             <button
               className={`nav-item ${page === key ? "active" : ""}`}
               key={key}
-              onClick={() => key === "deploy" ? setModalOpen(true) : setPage(key as DashboardPage)}
+              onClick={() => key === "deploy" ? setModalOpen(true) : setPage((key === "search" ? "agents" : key) as DashboardPage)}
             >
               <span className="nav-icon" aria-hidden="true">{icon}</span>
               {label}
             </button>
           ))}
-          <div className="nav-section-label">AgentOS</div>
-          <button className="nav-item" onClick={() => setPage("agents")}>
-            <span className="nav-icon" aria-hidden="true">S</span>
-            Search agents
-          </button>
-          <button className="nav-item" onClick={() => setPage("executions")}>
-            <span className="nav-icon" aria-hidden="true">R</span>
-            Runtime logs
-          </button>
         </nav>
         <div className="sidebar-bottom">
           <div className="wallet-pill">
@@ -455,25 +1076,30 @@ export function Dashboard() {
               <div className="agent-tabs">
                 {createdAgents.length === 0 ? (
                   <button className="agent-tab active" onClick={() => setModalOpen(true)}>
-                    Create real agent
+                    {agentsLoading ? "Loading onchain agents..." : "Create real agent"}
                   </button>
                 ) : createdAgents.map((created) => (
-                  <button className={`agent-tab ${selectedCreatedAgent?.ensName === created.ensName ? "active" : ""}`} key={created.registryTx} onClick={() => selectAgent(created)}>
+                  <button className={`agent-tab ${selectedCreatedAgent?.ensName === created.ensName ? "active" : ""}`} key={created.ensName} onClick={() => selectAgent(created)}>
                     {created.ensName}
                   </button>
                 ))}
               </div>
+              {agentsLoadError ? (
+                <div className="notice-box">
+                  Onchain agent scan is rate-limited by the current RPC. You can still deploy a new real agent; after deployment it appears here immediately.
+                </div>
+              ) : null}
               <div className="chat-messages" aria-live="polite">
                 {messages.map((msg, idx) => (
                   <div className={`msg ${msg.role}`} key={`${msg.role}-${idx}`}>
-                    <div className="msg-bubble">{msg.text}</div>
+                    <div className="msg-bubble">{renderMessageText(msg.text)}</div>
                     <div className="msg-meta">{msg.role === "user" ? "you" : selectedCreatedAgent?.ensName || "agentos"} on Sepolia</div>
                   </div>
                 ))}
               </div>
               <div className="suggestions">
                 {[
-                  "Get a quote to swap 0.01 ETH to USDC",
+                  "Get a quote to swap 1 USDC to WETH",
                   `Resolve ${selectedCreatedAgent?.ensName || "my agent"} capabilities`,
                   "Show KeeperHub execution history",
                   "Prepare payment using preferred_token"
@@ -511,14 +1137,16 @@ export function Dashboard() {
                     <span>Deploy one with your connected wallet to create a smart wallet, ENS subname, ERC-8004 identity, and registry record.</span>
                   </div>
                 ) : createdAgents.map((created) => (
-                  <article className="agent-card" key={created.registryTx}>
-                    <div className="agent-ens">{created.ensName}</div>
+                  <article className="agent-card" key={created.ensName}>
+                    <a className="agent-ens proof-link" href={ensAppLink(created.ensName)} target="_blank" rel="noreferrer">{created.ensName}</a>
                     <div className="agent-desc">Wallet {shortAddress(created.smartWallet)} owned by {shortAddress(created.owner)}</div>
                     <div className="tx-row">
-                      <a href={txLink(created.factoryTx)} target="_blank" rel="noreferrer">Factory tx</a>
+                      <a href={ensAppLink(created.ensName)} target="_blank" rel="noreferrer">ENS profile</a>
+                      <button className="link-button" onClick={() => { selectAgent(created); setPage("activity"); }}>Wallet activity</button>
+                      {created.factoryTx ? <a href={txLink(created.factoryTx)} target="_blank" rel="noreferrer">Factory tx</a> : null}
                       {created.ensTx ? <a href={txLink(created.ensTx)} target="_blank" rel="noreferrer">ENS tx</a> : null}
-                      <a href={txLink(created.identityTx)} target="_blank" rel="noreferrer">Identity tx</a>
-                      <a href={txLink(created.registryTx)} target="_blank" rel="noreferrer">Registry tx</a>
+                      {created.identityTx ? <a href={txLink(created.identityTx)} target="_blank" rel="noreferrer">Identity tx</a> : null}
+                      {created.registryTx ? <a href={txLink(created.registryTx)} target="_blank" rel="noreferrer">Registry tx</a> : null}
                     </div>
                   </article>
                 ))}
@@ -533,7 +1161,7 @@ export function Dashboard() {
                 </div>
                 <div className="empty-state">
                   <strong>Anyone can discover your agent by ENS name.</strong>
-                  <span>Resolve your deployed name.agentos.eth, read its text records, inspect specialty and endpoint, then call or pay that agent using its preferred token.</span>
+                  <span>Resolve your deployed name.agentos.eth, read its text records, inspect specialty and runtime endpoint, then call or pay that agent using its preferred token.</span>
                 </div>
               </section>
             </div>
@@ -559,8 +1187,8 @@ export function Dashboard() {
                   </div>
                 ) : null}
                 {createdAgents.map((created) => (
-                  <article className="agent-directory-card" key={created.registryTx}>
-                    <div className="agent-ens">{created.ensName}</div>
+                  <article className="agent-directory-card" key={created.ensName}>
+                    <a className="agent-ens proof-link" href={ensAppLink(created.ensName)} target="_blank" rel="noreferrer">{created.ensName}</a>
                     <p>Wallet {shortAddress(created.smartWallet)} is owned by {shortAddress(created.owner)}.</p>
                     <div className="agent-tags">
                       <span className="tag tag-active">user-owned</span>
@@ -569,8 +1197,9 @@ export function Dashboard() {
                     </div>
                     <button className="secondary-inline" onClick={() => { selectAgent(created); setPage("dashboard"); }}>Open runtime</button>
                     <div className="tx-row">
+                      <a href={ensAppLink(created.ensName)} target="_blank" rel="noreferrer">ENS profile</a>
                       {created.ensTx ? <a href={txLink(created.ensTx)} target="_blank" rel="noreferrer">ENS tx</a> : null}
-                      <a href={txLink(created.registryTx)} target="_blank" rel="noreferrer">Registry tx</a>
+                      {created.registryTx ? <a href={txLink(created.registryTx)} target="_blank" rel="noreferrer">Registry tx</a> : null}
                     </div>
                   </article>
                 ))}
@@ -579,28 +1208,159 @@ export function Dashboard() {
           </section>
         ) : null}
 
-        {page === "executions" ? (
+        {page === "activity" ? (
           <section className="content-panel">
             <div className="panel">
               <div className="panel-head">
                 <div>
-                  <p className="eyebrow">Execution feed</p>
-                  <h2>Uniswap and KeeperHub runtime</h2>
+                  <p className="eyebrow">Autonomous wallet controls</p>
+                  <h2>Agent wallet activity</h2>
                 </div>
+                {selectedCreatedAgent ? (
+                  <a className="tiny-btn" href={`https://sepolia.etherscan.io/address/${selectedCreatedAgent.smartWallet}`} target="_blank" rel="noreferrer">Open wallet</a>
+                ) : null}
               </div>
-              {healthError ? <div className="error-box">{healthError}</div> : null}
-              {[
-                ["Uniswap quote", "Live agent requests call the backend Trading API tool before swap preparation.", health?.uniswap ? "configured" : "needs API key"],
-                ["KeeperHub route", "Prepared transactions can be submitted to KeeperHub Direct Execution for retries and audit trails.", health?.keeperhub?.ok ? "authenticated" : health?.keeperhub?.message || "checking"],
-                ["Owner model", "Agent smart wallets are deployed for the connected wallet owner, not a server deployer key.", address ? shortAddress(address) : "connect wallet"],
-                ["Registry proof", "Successful deployments write factory, ENS, identity, and registry transaction hashes.", `${createdAgents.length} user agents`]
-              ].map(([title, desc, status]) => (
-                <div className="activity" key={title}>
-                  <div className="act-title">{title}</div>
-                  <div className="act-desc">{desc}</div>
-                  <div className="act-meta"><span>{status}</span></div>
+
+              {selectedCreatedAgent ? (
+                <>
+                  <div className="records records-wide">
+                    <div className="record-title">
+                      <a className="proof-link" href={ensAppLink(selectedCreatedAgent.ensName)} target="_blank" rel="noreferrer">{selectedCreatedAgent.ensName}</a>
+                    </div>
+                    <div className="record-row">
+                      <span className="record-key">agent_wallet</span>
+                      <span className="record-val">
+                        <a className="proof-link" href={`https://sepolia.etherscan.io/address/${selectedCreatedAgent.smartWallet}`} target="_blank" rel="noreferrer">{selectedCreatedAgent.smartWallet}</a>
+                      </span>
+                    </div>
+                    <div className="record-row">
+                      <span className="record-key">owner</span>
+                      <span className="record-val">{selectedCreatedAgent.owner}</span>
+                    </div>
+                    <div className="record-row">
+                      <span className="record-key">ens_profile</span>
+                      <span className="record-val"><a className="proof-link" href={ensAppLink(selectedCreatedAgent.ensName)} target="_blank" rel="noreferrer">Open on Sepolia ENS</a></span>
+                    </div>
+                    <div className="record-row">
+                      <span className="record-key">eth_balance</span>
+                      <span className="record-val">{agentEthBalance || "Loading..."}</span>
+                    </div>
+                    <div className="record-row">
+                      <span className="record-key">usdc_balance</span>
+                      <span className="record-val">{agentUsdcBalance || "Loading..."}</span>
+                    </div>
+                  </div>
+
+                  <div className="activity">
+                    <div className="act-title">Fund Agent Wallet</div>
+                    <div className="act-desc">Send Sepolia ETH for gas or Sepolia USDC for the demo swap path. Funds move from the connected owner wallet to the selected agent smart wallet.</div>
+                    <div className="fund-grid">
+                      <label>
+                        <span>Sepolia ETH</span>
+                        <input className="field" value={fundEthAmount} onChange={(e) => setFundEthAmount(e.target.value)} inputMode="decimal" />
+                      </label>
+                      <button className="secondary-inline" onClick={fundAgentEth} disabled={!walletClient}>Send ETH</button>
+                      <label>
+                        <span>Sepolia USDC</span>
+                        <input className="field" value={fundUsdcAmount} onChange={(e) => setFundUsdcAmount(e.target.value)} inputMode="decimal" />
+                      </label>
+                      <button className="secondary-inline" onClick={fundAgentUsdc} disabled={!walletClient}>Send USDC</button>
+                    </div>
+                    {fundStatus ? <div className="notice-box">{fundStatus}</div> : null}
+                  </div>
+
+                  <div className="activity">
+                    <div className="act-title">Authorize Execution</div>
+                    <div className="act-desc">
+                      Allows the configured execution caller to run this agent wallet against Sepolia USDC, Permit2, and the Uniswap Universal Router. This is required before a chat confirmation can route a prepared swap through the smart wallet.
+                    </div>
+                    <div className="auth-row">
+                      <span className={`proof-chip ${executionAuthorized ? "proof-chip-ok" : ""}`}>USDC {shortAddress(sepoliaUsdc)}</span>
+                      <span className={`proof-chip ${executionAuthorized ? "proof-chip-ok" : ""}`}>Permit2 {shortAddress(permit2Address)}</span>
+                      <span className={`proof-chip ${executionAuthorized ? "proof-chip-ok" : ""}`}>Router {shortAddress(universalRouterSepolia)}</span>
+                      <button className={`secondary-inline auth-button ${executionAuthorized ? "authorized-btn" : ""}`} onClick={authorizeExecution} disabled={!walletClient || authorizing || executionAuthorized}>
+                        {executionAuthorized ? "Authorized" : authorizing ? "Authorizing..." : "Authorize KeeperHub Execution"}
+                      </button>
+                      {authorizeStatus ? <span className={`auth-status ${executionAuthorized ? "auth-status-ok" : ""}`}>{authorizeStatus}</span> : null}
+                    </div>
+                  </div>
+
+                  <div className="activity">
+                    <div className="act-title">Deployment transaction links</div>
+                    <div className="act-desc">These links prove the selected agent was created, named, given an ERC-8004 identity, and registered for discovery.</div>
+                    <div className="tx-row">
+                      {selectedCreatedAgent.factoryTx ? <a href={txLink(selectedCreatedAgent.factoryTx)} target="_blank" rel="noreferrer">Factory wallet tx</a> : null}
+                      {selectedCreatedAgent.ensTx ? <a href={txLink(selectedCreatedAgent.ensTx)} target="_blank" rel="noreferrer">ENS registration tx</a> : null}
+                      {selectedCreatedAgent.identityTx ? <a href={txLink(selectedCreatedAgent.identityTx)} target="_blank" rel="noreferrer">ERC-8004 identity tx</a> : null}
+                      {selectedCreatedAgent.registryTx ? <a href={txLink(selectedCreatedAgent.registryTx)} target="_blank" rel="noreferrer">Registry tx</a> : null}
+                    </div>
+                    {!selectedCreatedAgent.factoryTx && !selectedCreatedAgent.ensTx && !selectedCreatedAgent.identityTx && !selectedCreatedAgent.registryTx ? (
+                      <div className="notice-box">No deployment proof hashes are cached for this browser session. Deploy a fresh agent to capture all four links here.</div>
+                    ) : null}
+                  </div>
+
+                  <div className="activity">
+                    <div className="act-title">Agent wallet transaction links</div>
+                    <div className="act-desc">Live transactions emitted by this smart wallet when KeeperHub or the executor calls AgentSmartWallet.execute.</div>
+                    {walletActivityError ? <div className="notice-box">{walletActivityError}</div> : null}
+                    {walletActivities.length > 0 ? (
+                      <div className="activity-list">
+                          {walletActivities.map((item) => (
+                            <div className="activity-row" key={item.txHash}>
+                              <div>
+                                <strong>{item.action}</strong>
+                                <span>{item.detail}</span>
+                                <small>Target {shortAddress(item.target)}</small>
+                              </div>
+                              <a className="proof-link" href={txLink(item.txHash)} target="_blank" rel="noreferrer">Open tx</a>
+                            </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="notice-box">No AgentSmartWallet.execute transactions found in the current log window yet. Run a confirmed swap after funding and authorization to populate this list.</div>
+                    )}
+                  </div>
+
+                  <div className="activity">
+                    <div className="act-title">ENS execution memory</div>
+                    <div className="act-desc">
+                      Write the latest successful swap proof back to ENS so anyone resolving this agent can see its last transaction, KeeperHub run ID, and updated reputation.
+                    </div>
+                    <div className="proof-grid">
+                      <div>
+                        <span>Last swap tx</span>
+                        {lastExecutionProof?.swap?.txHash ? (
+                          <a className="proof-link" href={txLink(lastExecutionProof.swap.txHash)} target="_blank" rel="noreferrer">{shortAddress(lastExecutionProof.swap.txHash)}</a>
+                        ) : (
+                          <strong>Run a swap first</strong>
+                        )}
+                      </div>
+                      <div>
+                        <span>KeeperHub run</span>
+                        <strong>{lastExecutionProof?.swap?.keeperHubRunId || "Not ready"}</strong>
+                      </div>
+                      <div>
+                        <span>Next reputation</span>
+                        <strong>{Math.min(100, Number(selectedCreatedAgent.records.reputation || "50") + 1)}</strong>
+                      </div>
+                    </div>
+                    <button
+                      className="secondary-inline"
+                      onClick={writeExecutionProofToEns}
+                      disabled={!walletClient || !lastExecutionProof?.swap?.txHash}
+                    >
+                      Write Proof to ENS
+                    </button>
+                    {ensProofStatus ? <div className="notice-box">{ensProofStatus}</div> : null}
+                  </div>
+                </>
+              ) : (
+                <div className="empty-state directory-empty">
+                  <strong>No selected agent wallet.</strong>
+                  <span>Deploy or select a real ENS-named agent first, then fund its smart wallet here.</span>
+                  <button className="secondary-inline" onClick={() => setModalOpen(true)}>Deploy Agent</button>
                 </div>
-              ))}
+              )}
             </div>
           </section>
         ) : null}
@@ -617,22 +1377,26 @@ export function Dashboard() {
               {createdAgents.length > 0 ? (
                 <select className="select records-select" value={selectedCreatedAgent?.ensName || ""} onChange={(e) => setAgent(e.target.value)} aria-label="Select deployed agent">
                   {createdAgents.map((created) => (
-                    <option value={created.ensName} key={created.registryTx}>{created.ensName}</option>
+                    <option value={created.ensName} key={created.ensName}>{created.ensName}</option>
                   ))}
                 </select>
               ) : null}
               <div className="records records-wide">
-                <div className="record-title">{selectedCreatedAgent?.ensName || `No ${parentEnsName} agent deployed yet`}</div>
+                <div className="record-title">
+                  {selectedCreatedAgent ? (
+                    <a className="proof-link" href={ensAppLink(selectedCreatedAgent.ensName)} target="_blank" rel="noreferrer">{selectedCreatedAgent.ensName}</a>
+                  ) : `No ${parentEnsName} agent deployed yet`}
+                </div>
                 {Object.entries(selectedRecords).length > 0 ? Object.entries(selectedRecords).map(([key, value]) => (
                   <div className="record-row" key={key}>
-                    <span className="record-key">{key}</span>
-                    <span className="record-val">{value}</span>
+                    <span className="record-key">{displayRecordKey(key)}</span>
+                    <span className="record-val" title={key === "endpoint" ? value : undefined}>{displayRecordValue(key, value)}</span>
                   </div>
                 )) : <div className="empty-state"><strong>No records yet.</strong><span>Deploy an agent to write real ENS text records.</span></div>}
               </div>
               <div className="empty-state">
                 <strong>How the orchestrator chooses agents</strong>
-                <span>The orchestrator resolves ENS, reads specialty, fee, endpoint, preferred_token, and reputation, then routes the task to the matching agent. Research tasks go to research agents; swap and payment tasks go to trade agents.</span>
+                <span>The orchestrator resolves ENS, reads specialty, fee, runtime_endpoint, preferred_token, and reputation, then routes the task to the matching agent. Research tasks go to research agents; swap and payment tasks go to trade agents.</span>
               </div>
             </div>
           </section>
@@ -644,7 +1408,7 @@ export function Dashboard() {
           <div className="modal-head">
             <div>
               <p className="eyebrow">Wallet-signed deployment</p>
-              <h2 id="deploy-title">Create Agent</h2>
+              <h2 id="deploy-title">{deployComplete ? "Agent Ready" : "Create Agent"}</h2>
             </div>
             <button className="icon-btn" onClick={() => setModalOpen(false)} disabled={deploying} aria-label="Close deploy dialog">x</button>
           </div>
@@ -692,12 +1456,25 @@ export function Dashboard() {
               ))}
             </div>
             {deployError ? <div className="error-box">{deployError}</div> : null}
+            {deployComplete ? (
+              <div className="notice-box">
+                Agent deployed successfully. Close this window and use the runtime for {agent || agentName}.
+              </div>
+            ) : null}
           </div>
           <div className="modal-footer">
-            <button className="btn-cancel" onClick={() => setModalOpen(false)} disabled={deploying}>Cancel</button>
-            <button className="btn-deploy" onClick={deployAgent} disabled={deploying || !isConnected}>
-              {deploying ? "Deploying..." : isConnected ? "Sign and deploy" : "Connect wallet first"}
-            </button>
+            {deployComplete ? (
+              <button className="btn-deploy" onClick={() => setModalOpen(false)}>
+                Use agent
+              </button>
+            ) : (
+              <>
+                <button className="btn-cancel" onClick={() => setModalOpen(false)} disabled={deploying}>Cancel</button>
+                <button className="btn-deploy" onClick={deployAgent} disabled={deploying || !isConnected}>
+                  {deploying ? "Deploying..." : isConnected ? "Sign and deploy" : "Connect wallet first"}
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>

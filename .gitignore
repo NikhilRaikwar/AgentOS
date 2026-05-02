@@ -11,3 +11,5 @@ typechain-types
 *.log
 *.pem
 *.key
+*.tsbuildinfo
+AGENTOS_TRACKS_AND_DEMO.txt

@@ -101,9 +101,9 @@ export function LandingPage() {
             {({ account, chain, openAccountModal, openChainModal, openConnectModal, mounted }) => {
               const ready = mounted;
               const connected = ready && account && chain;
-              if (!connected) return <button className="nav-cta" onClick={openConnectModal}>Connect Wallet</button>;
-              if (chain.unsupported) return <button className="nav-cta" onClick={openChainModal}>Wrong Network</button>;
-              return <button className="nav-cta" onClick={openAccountModal}>{account.displayName}</button>;
+              if (!connected) return <button type="button" className="nav-cta" disabled={!ready} onClick={() => openConnectModal?.()}>Connect Wallet</button>;
+              if (chain.unsupported) return <button type="button" className="nav-cta" onClick={() => openChainModal?.()}>Wrong Network</button>;
+              return <button type="button" className="nav-cta" onClick={() => openAccountModal?.()}>{account.displayName}</button>;
             }}
           </ConnectButton.Custom>
         </div>
@@ -117,8 +117,8 @@ export function LandingPage() {
               <span>ETHGlobal Open Agents 2026</span>
             </div>
 
+            <div className="hero-announcement fade-up d2">AgentOS - The Onchain Agent Layer</div>
             <h1 className="fade-up d2">
-              <span className="overline">AgentOS - The Onchain Agent Layer</span>
               The <em>operating system</em><br />for AI agents that<br />own, pay and prove.
             </h1>
 
@@ -133,9 +133,9 @@ export function LandingPage() {
                 {({ account, chain, openAccountModal, openChainModal, openConnectModal, mounted }) => {
                   const ready = mounted;
                   const connected = ready && account && chain;
-                  if (!connected) return <button className="btn-primary" onClick={openConnectModal}>Connect Wallet</button>;
-                  if (chain.unsupported) return <button className="btn-primary" onClick={openChainModal}>Switch Network</button>;
-                  return <button className="btn-primary" onClick={openAccountModal}>Connected: {account.displayName}</button>;
+                  if (!connected) return <button type="button" className="btn-primary" disabled={!ready} onClick={() => openConnectModal?.()}>Connect Wallet</button>;
+                  if (chain.unsupported) return <button type="button" className="btn-primary" onClick={() => openChainModal?.()}>Switch Network</button>;
+                  return <button type="button" className="btn-primary" onClick={() => openAccountModal?.()}>Connected: {account.displayName}</button>;
                 }}
               </ConnectButton.Custom>
               <a href="#how" className="btn-outline">See how it works</a>

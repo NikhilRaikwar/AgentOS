@@ -1,4 +1,4 @@
-import { decodeFunctionData, erc20Abi, isAddress, isHex, parseAbi } from "viem";
+import { decodeFunctionData, encodeFunctionData, erc20Abi, isAddress, isHex, parseAbi, type Address } from "viem";
 import { config } from "./config.js";
 
 type KeeperHubPayload = Record<string, unknown>;
@@ -10,6 +10,10 @@ const universalRouterAbi = parseAbi([
 
 const permit2Abi = parseAbi([
   "function approve(address token, address spender, uint160 amount, uint48 expiration)"
+]);
+
+const agentSmartWalletAbi = parseAbi([
+  "function execute(address target,uint256 value,bytes data) returns (bytes result)"
 ]);
 
 async function khFetch(path: string, body?: KeeperHubPayload, method = "POST") {
@@ -102,7 +106,41 @@ export async function submitTransaction(params: {
     };
   }
 
-  return result;
+  return waitForDirectExecution(result);
+}
+
+export async function submitAgentWalletTransaction(params: {
+  agentEnsName: string;
+  agentWallet: Address;
+  tx: KeeperHubPayload;
+  policy?: KeeperHubPayload;
+}) {
+  const tx = params.tx as { to?: string; data?: string; value?: string | number | bigint; chainId?: number };
+  if (!isAddress(params.agentWallet)) throw new Error("Agent wallet address is invalid");
+  if (!tx.to || !isAddress(tx.to)) throw new Error("Agent wallet execution requires tx.to");
+  if (!tx.data || !isHex(tx.data as `0x${string}`)) throw new Error("Agent wallet execution requires hex tx.data");
+
+  const wrapped = {
+    to: params.agentWallet,
+    data: encodeFunctionData({
+      abi: agentSmartWalletAbi,
+      functionName: "execute",
+      args: [tx.to as Address, BigInt(normalizeWei(tx.value)), tx.data as `0x${string}`]
+    }),
+    value: "0",
+    chainId: tx.chainId || config.chainId
+  };
+
+  return submitTransaction({
+    agentEnsName: params.agentEnsName,
+    tx: wrapped,
+    policy: {
+      ...(params.policy || {}),
+      smartWallet: params.agentWallet,
+      wrappedTarget: tx.to,
+      wrappedValue: normalizeWei(tx.value)
+    }
+  });
 }
 
 export async function getAgentExecutionHistory(agentEnsName: string) {
@@ -110,6 +148,28 @@ export async function getAgentExecutionHistory(agentEnsName: string) {
     agentEnsName,
     note: "KeeperHub Direct Execution exposes status by executionId. Run a transaction first, then query /execute/{executionId}/status."
   };
+}
+
+async function waitForDirectExecution(result: unknown) {
+  if (!result || typeof result !== "object" || !("executionId" in result)) return result;
+  const executionId = String((result as { executionId?: unknown }).executionId || "");
+  if (!executionId) return result;
+
+  let latest: unknown = result;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    await sleep(1250);
+    latest = await khFetch(`/execute/${executionId}/status`, undefined, "GET");
+    const status = typeof latest === "object" && latest && "status" in latest
+      ? String((latest as { status?: unknown }).status || "").toLowerCase()
+      : "";
+    if (status === "completed" || status === "failed") return latest;
+  }
+
+  return latest;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function networkName(chainId: number) {
@@ -134,7 +194,7 @@ function normalizeWei(value: string | number | bigint | undefined) {
 }
 
 function decodeKnownTransaction(data: `0x${string}`) {
-  for (const abi of [universalRouterAbi, permit2Abi, erc20Abi]) {
+  for (const abi of [agentSmartWalletAbi, universalRouterAbi, permit2Abi, erc20Abi]) {
     try {
       const decoded = decodeFunctionData({ abi, data });
       return { ...decoded, abi };

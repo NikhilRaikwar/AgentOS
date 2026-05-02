@@ -25,6 +25,16 @@ function getExecutorAddress() {
 
 app.get("/health", async (_req, res) => {
   const keeperhub = await keeperHubHealthCheck();
+  const keeperHubWallet = typeof keeperhub === "object"
+    && keeperhub
+    && "result" in keeperhub
+    && typeof keeperhub.result === "object"
+    && keeperhub.result
+    && "walletAddress" in keeperhub.result
+    && typeof keeperhub.result.walletAddress === "string"
+    && isAddress(keeperhub.result.walletAddress)
+    ? keeperhub.result.walletAddress
+    : undefined;
   res.json({
     ok: true,
     chainId: config.chainId,
@@ -40,7 +50,13 @@ app.get("/health", async (_req, res) => {
     executorAddress: getExecutorAddress(),
     openai: Boolean(config.openAiApiKey),
     uniswap: Boolean(config.uniswapApiKey),
-    keeperhub
+    keeperhub: {
+      ok: keeperhub.ok,
+      status: "status" in keeperhub ? keeperhub.status : undefined,
+      message: "message" in keeperhub ? keeperhub.message : undefined,
+      error: "error" in keeperhub ? keeperhub.error : undefined,
+      result: keeperHubWallet ? { walletAddress: keeperHubWallet } : undefined
+    }
   });
 });
 
@@ -86,12 +102,17 @@ app.post("/agents/:name/run", async (req, res, next) => {
   try {
     const body = z.object({
       message: z.string().min(1),
-      walletAddress: z.string().optional()
+      walletAddress: z.string().optional(),
+      history: z.array(z.object({
+        role: z.enum(["user", "agent", "tool"]),
+        text: z.string()
+      })).optional()
     }).parse(req.body);
     res.json(await runAgent({
       agentName: req.params.name,
       message: body.message,
-      walletAddress: body.walletAddress as Address | undefined
+      walletAddress: body.walletAddress as Address | undefined,
+      history: body.history
     }));
   } catch (error) {
     next(error);
