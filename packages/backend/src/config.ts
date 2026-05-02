@@ -21,7 +21,8 @@ export const config = {
   erc8004ReputationRegistryAddress: process.env.ERC8004_REPUTATION_REGISTRY_ADDRESS || "",
   erc8004ValidationRegistryAddress: process.env.ERC8004_VALIDATION_REGISTRY_ADDRESS || "",
   agentRegistryAddress: process.env.AGENT_REGISTRY_ADDRESS || "",
-  agentWalletFactoryAddress: process.env.AGENT_WALLET_FACTORY_ADDRESS || ""
+  agentWalletFactoryAddress: process.env.AGENT_WALLET_FACTORY_ADDRESS || "",
+  agentSubnameRegistrarAddress: process.env.AGENT_SUBNAME_REGISTRAR_ADDRESS || process.env.NEXT_PUBLIC_AGENT_SUBNAME_REGISTRAR_ADDRESS || ""
 };
 
 export function requireEnv(name: keyof typeof config) {

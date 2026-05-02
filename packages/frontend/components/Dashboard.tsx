@@ -15,6 +15,7 @@ import { sepolia } from "wagmi/chains";
 import { useAccount, usePublicClient, useSwitchChain, useWalletClient } from "wagmi";
 import {
   agentRegistryAbi,
+  agentSubnameRegistrarAbi,
   agentWalletFactoryAbi,
   identityRegistryAbi,
   sepoliaContracts
@@ -88,6 +89,7 @@ type CreatedAgent = {
   identityTx: Hex;
   factoryTx: Hex;
   registryTx: Hex;
+  ensTx?: Hex;
 };
 
 const greetings: Record<AgentKey, string> = {
@@ -98,6 +100,7 @@ const greetings: Record<AgentKey, string> = {
 
 const initialSteps: DeployStep[] = [
   { label: "Create user-owned agent smart wallet", status: "idle" },
+  { label: "Mint real ENS subname under agentos.eth", status: "idle" },
   { label: "Mint ERC-8004 identity with wallet binding", status: "idle" },
   { label: "Register agent in AgentFi registry", status: "idle" }
 ];
@@ -225,6 +228,18 @@ export function Dashboard() {
     const node = namehash(ensName);
     const endpoint = `${apiUrl}/agents/${safeName}/run`;
     const agentUri = `agentfi://${ensName}`;
+    const textRecords = [
+      { key: "specialty", value: specialty },
+      { key: "fee", value: fee },
+      { key: "preferred_token", value: preferredToken },
+      { key: "endpoint", value: endpoint },
+      { key: "model", value: "OpenAI" },
+      { key: "reputation", value: "50" },
+      { key: "tasks_done", value: "0" },
+      { key: "framework", value: "agentos/1.0" },
+      { key: "keeperhub", value: "enabled" },
+      { key: "wallet_type", value: "user-owned-smart-wallet" }
+    ];
     const metadata = [
       { metadataKey: "ensName", metadataValue: stringToHex(ensName) },
       { metadataKey: "specialty", metadataValue: stringToHex(specialty) },
@@ -271,31 +286,54 @@ export function Dashboard() {
         detail: `Wallet ${shortAddress(smartWallet)} owned by ${shortAddress(address)}`
       }));
 
+      if (!sepoliaContracts.subnameRegistrar) {
+        setDeploySteps((steps) => updateStep(steps, 1, {
+          status: "error",
+          detail: "Set NEXT_PUBLIC_AGENT_SUBNAME_REGISTRAR_ADDRESS after deploying the registrar."
+        }));
+        throw new Error("Agent subname registrar is not configured yet.");
+      }
+
       setDeploySteps((steps) => updateStep(steps, 1, { status: "active" }));
+      const ensTx = await walletClient.writeContract({
+        address: sepoliaContracts.subnameRegistrar,
+        abi: agentSubnameRegistrarAbi,
+        functionName: "register",
+        args: [safeName, address, smartWallet, textRecords]
+      });
+      setDeploySteps((steps) => updateStep(steps, 1, { status: "active", hash: ensTx }));
+      await publicClient.waitForTransactionReceipt({ hash: ensTx });
+      setDeploySteps((steps) => updateStep(steps, 1, {
+        status: "done",
+        hash: ensTx,
+        detail: `${ensName} resolves to ${shortAddress(smartWallet)}`
+      }));
+
+      setDeploySteps((steps) => updateStep(steps, 2, { status: "active" }));
       const identityTx = await walletClient.writeContract({
         address: sepoliaContracts.identity,
         abi: identityRegistryAbi,
         functionName: "registerWithWallet",
         args: [agentUri, metadata, smartWallet]
       });
-      setDeploySteps((steps) => updateStep(steps, 1, { status: "active", hash: identityTx }));
+      setDeploySteps((steps) => updateStep(steps, 2, { status: "active", hash: identityTx }));
       await publicClient.waitForTransactionReceipt({ hash: identityTx });
-      setDeploySteps((steps) => updateStep(steps, 1, {
+      setDeploySteps((steps) => updateStep(steps, 2, {
         status: "done",
         hash: identityTx,
         detail: "ERC-8004 identity minted to connected wallet"
       }));
 
-      setDeploySteps((steps) => updateStep(steps, 2, { status: "active" }));
+      setDeploySteps((steps) => updateStep(steps, 3, { status: "active" }));
       const registryTx = await walletClient.writeContract({
         address: sepoliaContracts.registry,
         abi: agentRegistryAbi,
         functionName: "registerAgent",
         args: [node, ensName, smartWallet, address]
       });
-      setDeploySteps((steps) => updateStep(steps, 2, { status: "active", hash: registryTx }));
+      setDeploySteps((steps) => updateStep(steps, 3, { status: "active", hash: registryTx }));
       await publicClient.waitForTransactionReceipt({ hash: registryTx });
-      setDeploySteps((steps) => updateStep(steps, 2, {
+      setDeploySteps((steps) => updateStep(steps, 3, {
         status: "done",
         hash: registryTx,
         detail: "Agent indexed for discovery"
@@ -307,7 +345,8 @@ export function Dashboard() {
         owner: address,
         factoryTx,
         identityTx,
-        registryTx
+        registryTx,
+        ensTx
       }, ...prev]);
     } catch (error) {
       setDeployError(error instanceof Error ? error.message : String(error));
@@ -448,7 +487,7 @@ export function Dashboard() {
               {createdAgents.length === 0 ? (
                 <div className="empty-state">
                   <strong>No user agents yet.</strong>
-                  <span>Deploy one with your connected wallet to create a smart wallet, ERC-8004 identity, and registry record.</span>
+                  <span>Deploy one with your connected wallet to create a smart wallet, ENS subname, ERC-8004 identity, and registry record.</span>
                 </div>
               ) : createdAgents.map((created) => (
                 <article className="agent-card" key={created.registryTx}>
@@ -456,6 +495,7 @@ export function Dashboard() {
                   <div className="agent-desc">Wallet {shortAddress(created.smartWallet)} owned by {shortAddress(created.owner)}</div>
                   <div className="tx-row">
                     <a href={txLink(created.factoryTx)} target="_blank" rel="noreferrer">Factory tx</a>
+                    {created.ensTx ? <a href={txLink(created.ensTx)} target="_blank" rel="noreferrer">ENS tx</a> : null}
                     <a href={txLink(created.identityTx)} target="_blank" rel="noreferrer">Identity tx</a>
                     <a href={txLink(created.registryTx)} target="_blank" rel="noreferrer">Registry tx</a>
                   </div>

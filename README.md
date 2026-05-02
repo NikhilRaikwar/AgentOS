@@ -20,6 +20,7 @@ Built for ETHGlobal Open Agents with `agentos.eth` as the agent namespace.
 flowchart TD
   U["User Wallet"] --> F["Next.js Frontend"]
   F --> FAC["Agent Wallet Factory: createAgentWalletFor(owner)"]
+  F --> ENSREG["Agent Subname Registrar"]
   F --> R["ERC-8004 Registries"]
   F --> AR["Agent Registry"]
   F --> B["Express Backend"]
@@ -28,6 +29,7 @@ flowchart TD
   O --> UNI["Uniswap Trading API: quote, swap, order"]
   O --> KH["KeeperHub API/MCP: workflows, execution, audit logs"]
   FAC --> W["Agent Smart Wallet"]
+  ENSREG --> ENS
   W --> UNI
   KH --> W
   R --> ID["Identity Registry"]
@@ -51,6 +53,7 @@ ERC8004_REPUTATION_REGISTRY_ADDRESS=0xe7f6b315cA9d49bA1aEcA516311a043542A2d161
 ERC8004_VALIDATION_REGISTRY_ADDRESS=0x3C5E64A4f0fc23C4205AC5a5D281Ecab06Ee57D9
 AGENT_REGISTRY_ADDRESS=0x4180F328e2600E8b846e13A1EFe85D21690C6e55
 AGENT_WALLET_FACTORY_ADDRESS=0x75C553505C7912377E08e4B9b2c824D722a704CB
+AGENT_SUBNAME_REGISTRAR_ADDRESS=0x3ccF94F8B4E5Dd6886A7cbcb2f3C52482dA4ff9E
 ```
 
 Deployment metadata is also stored in [`deployments/sepolia.json`](deployments/sepolia.json).
@@ -78,6 +81,23 @@ Required for the full demo:
 - `AGENT_EXECUTOR_PRIVATE_KEY` for the backend executor address allowed by agent smart wallets
 
 Normal users do not need to expose private keys to the server. The connected wallet signs agent wallet creation, ERC-8004 identity registration, and AgentFi registry registration directly from the frontend.
+
+## ENS Subname Registrar
+
+To let any connected wallet mint `name.agentos.eth` without a backend private key:
+
+1. Set `ENS_RESOLVER_ADDRESS` to the Sepolia Public Resolver used by `agentos.eth`.
+2. Deploy the registrar:
+
+```bash
+cd packages/contracts
+npm run deploy:registrar:sepolia
+```
+
+3. Copy the printed `AGENT_SUBNAME_REGISTRAR_ADDRESS` into `.env` and `NEXT_PUBLIC_AGENT_SUBNAME_REGISTRAR_ADDRESS` into `packages/frontend/.env.local` if used.
+4. In the Sepolia ENS app, open `agentos.eth` -> Ownership -> Edit roles, and set the registrar contract as the manager/controller allowed to create subnames.
+
+After that, the frontend deployment flow mints the smart wallet, creates the real ENS subname, writes resolver records, mints ERC-8004 identity, and indexes the agent.
 
 Never commit `.env`.
 

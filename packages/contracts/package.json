@@ -5,6 +5,7 @@
     "compile": "set APPDATA=.hardhat-global&& set LOCALAPPDATA=.hardhat-global&& hardhat compile",
     "test": "set APPDATA=.hardhat-global&& set LOCALAPPDATA=.hardhat-global&& hardhat test",
     "deploy:sepolia": "set APPDATA=.hardhat-global&& set LOCALAPPDATA=.hardhat-global&& hardhat run scripts/deploy.ts --network sepolia",
+    "deploy:registrar:sepolia": "set APPDATA=.hardhat-global&& set LOCALAPPDATA=.hardhat-global&& hardhat run scripts/deploy-registrar.ts --network sepolia",
     "build": "set APPDATA=.hardhat-global&& set LOCALAPPDATA=.hardhat-global&& hardhat compile",
     "lint": "set APPDATA=.hardhat-global&& set LOCALAPPDATA=.hardhat-global&& hardhat compile"
   },

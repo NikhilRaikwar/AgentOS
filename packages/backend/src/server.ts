@@ -34,7 +34,8 @@ app.get("/health", async (_req, res) => {
       erc8004ReputationRegistry: config.erc8004ReputationRegistryAddress,
       erc8004ValidationRegistry: config.erc8004ValidationRegistryAddress,
       agentRegistry: config.agentRegistryAddress,
-      agentWalletFactory: config.agentWalletFactoryAddress
+      agentWalletFactory: config.agentWalletFactoryAddress,
+      agentSubnameRegistrar: config.agentSubnameRegistrarAddress
     },
     executorAddress: getExecutorAddress(),
     openai: Boolean(config.openAiApiKey),
