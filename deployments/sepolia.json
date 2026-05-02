@@ -1,0 +1,12 @@
+{
+  "network": "sepolia",
+  "chainId": 11155111,
+  "parentEnsName": "agentos.eth",
+  "contracts": {
+    "erc8004IdentityRegistry": "0xCDced8F1DdBd05B41Da248857Dc10E1b5e27B4C8",
+    "erc8004ReputationRegistry": "0x1c7426F56aF77D81759D08A8860735e288AD8B15",
+    "erc8004ValidationRegistry": "0xeE0EEC3A3cC33B6AF722e0DC649135fF5dD1108B",
+    "agentRegistry": "0x6C0Ea9187Cc54Da1b301B0990A89A6cFB6caf6ed",
+    "agentWalletFactory": "0x1e208080C889415029fC21d85a05159e523a2D4C"
+  }
+}
