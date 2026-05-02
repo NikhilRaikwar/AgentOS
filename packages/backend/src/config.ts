@@ -12,6 +12,11 @@ import path from "node:path";
 
 export const config = {
   port: Number(process.env.PORT || 3001),
+  corsOrigins: (process.env.CORS_ORIGINS || "https://agentos.nikhilraikwar.me,http://localhost:3000,http://127.0.0.1:3000")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+  backendApiSecret: process.env.BACKEND_API_SECRET || "",
   parentEnsName: process.env.PARENT_ENS_NAME || "agentos.eth",
   chainId: Number(process.env.NEXT_PUBLIC_CHAIN_ID || 11155111),
   sepoliaRpcUrl: process.env.SEPOLIA_RPC_URL || "",

@@ -10,8 +10,31 @@ import { executePreparedSwap, runAgent } from "./openai-agent.js";
 import { getQuote, prepareSwap } from "./uniswap.js";
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || config.corsOrigins.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error("Origin not allowed by AgentOS CORS policy"));
+  }
+}));
 app.use(express.json({ limit: "1mb" }));
+
+function requireBackendSecret(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (!config.backendApiSecret) {
+    res.status(503).json({ error: "Backend API secret is not configured." });
+    return;
+  }
+
+  const provided = req.get("x-agentos-api-key");
+  if (provided !== config.backendApiSecret) {
+    res.status(401).json({ error: "Unauthorized backend execution request." });
+    return;
+  }
+
+  next();
+}
 
 function getExecutorAddress() {
   try {
@@ -98,7 +121,7 @@ app.post("/agents", async (req, res, next) => {
   }
 });
 
-app.post("/agents/:name/run", async (req, res, next) => {
+app.post("/agents/:name/run", requireBackendSecret, async (req, res, next) => {
   try {
     const body = z.object({
       message: z.string().min(1),
@@ -109,7 +132,7 @@ app.post("/agents/:name/run", async (req, res, next) => {
       })).optional()
     }).parse(req.body);
     res.json(await runAgent({
-      agentName: req.params.name,
+      agentName: String(req.params.name),
       message: body.message,
       walletAddress: body.walletAddress as Address | undefined,
       history: body.history
@@ -134,7 +157,7 @@ app.post("/quote", async (req, res, next) => {
   }
 });
 
-app.post("/swap/prepare", async (req, res, next) => {
+app.post("/swap/prepare", requireBackendSecret, async (req, res, next) => {
   try {
     res.json(await prepareSwap(req.body.quoteResponse, req.body.signature));
   } catch (error) {
@@ -142,7 +165,7 @@ app.post("/swap/prepare", async (req, res, next) => {
   }
 });
 
-app.post("/swap/execute", async (req, res, next) => {
+app.post("/swap/execute", requireBackendSecret, async (req, res, next) => {
   try {
     res.json(await executePreparedSwap(req.body));
   } catch (error) {
@@ -150,7 +173,7 @@ app.post("/swap/execute", async (req, res, next) => {
   }
 });
 
-app.post("/keeperhub/execute", async (req, res, next) => {
+app.post("/keeperhub/execute", requireBackendSecret, async (req, res, next) => {
   try {
     res.json(await submitTransaction(req.body));
   } catch (error) {
