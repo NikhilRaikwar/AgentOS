@@ -96,7 +96,7 @@ export function LandingPage() {
         <div className="nav-right">
           <a href="#how">How it works</a>
           <a href="#stack">Stack</a>
-          <a href="#prizes">Prizes</a>
+          <a href="#proof">Proof</a>
           <ConnectButton.Custom>
             {({ account, chain, openAccountModal, openChainModal, openConnectModal, mounted }) => {
               const ready = mounted;
@@ -219,22 +219,25 @@ export function LandingPage() {
           </div>
         </div>
 
-        <section className="section" id="prizes">
-          <span className="kicker">ETHGlobal Open Agents</span>
-          <h2 className="section-title">Built to win<br /><em>multiple tracks.</em></h2>
-          <p className="section-desc">ENS, Uniswap, and KeeperHub are integrated deeply enough to qualify independently.</p>
-          <div className="prize-grid">
+        <section className="section" id="proof">
+          <span className="kicker">Working proof</span>
+          <h2 className="section-title">A real agent launchpad,<br /><em>not a static demo.</em></h2>
+          <p className="section-desc">
+            AgentOS proves the full path from connected wallet to discoverable agent:
+            user-owned wallet deployment, ENS subname registration, machine-readable
+            capabilities, and execution-ready Uniswap/KeeperHub rails.
+          </p>
+          <div className="proof-grid">
             {[
-              ["Uniswap Foundation", "$5,000", "Best API Integration", "Quote, swap preparation, agentic payments, and FEEDBACK.md.", "pink"],
-              ["ENS AI Agents", "$2,500", "Best ENS for AI Agents", "Real subnames, text records, ERC-8004 identities, reputation.", "green"],
-              ["ENS Creative", "$2,500", "Most Creative ENS", "Machine-readable capability manifests in resolver text records.", "green"],
-              ["KeeperHub", "$4,500", "Best Use of KeeperHub", "Direct Execution adapter with reliability and audit story.", "gold"]
-            ].map(([sponsor, amount, title, desc, color]) => (
-              <div className="prize-box" key={sponsor}>
-                <div className="prize-sponsor">{sponsor}</div>
-                <div className={`prize-amount prize-${color}`}>{amount}</div>
-                <div className="prize-title">{title}</div>
-                <p className="prize-desc">{desc}</p>
+              ["01", "Wallet-owned agents", "The connected wallet signs the agent wallet deployment and remains the owner. The server never receives a user private key.", "green"],
+              ["02", "ENS as discovery", "Each agent gets a real agentos.eth subname. Other apps and agents can resolve the name and read capability records.", "blue"],
+              ["03", "Capability routing", "Specialty, fee, preferred token, endpoint, model, and reputation are written as structured records so orchestrators know which agent to use.", "gold"],
+              ["04", "Execution-ready finance", "Agents call Uniswap for quotes and prepare execution through the KeeperHub adapter with an audit-friendly runtime path.", "pink"]
+            ].map(([index, title, desc, color]) => (
+              <div className="proof-card" key={title}>
+                <div className={`proof-index proof-${color}`}>{index}</div>
+                <div className="proof-title">{title}</div>
+                <p className="proof-desc">{desc}</p>
               </div>
             ))}
           </div>

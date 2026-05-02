@@ -2,6 +2,7 @@
 
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
   decodeEventLog,
@@ -92,6 +93,8 @@ type CreatedAgent = {
   ensTx?: Hex;
 };
 
+type DashboardPage = "dashboard" | "agents" | "executions" | "ens";
+
 const greetings: Record<AgentKey, string> = {
   trade: "I can prepare Uniswap quotes, route swaps, and hand execution to KeeperHub while keeping the agent identity under ENS.",
   research: "I publish DeFi research capabilities through ENS-style records and can be paid through Uniswap-routed settlement.",
@@ -122,6 +125,7 @@ function updateStep(steps: DeployStep[], index: number, patch: Partial<DeploySte
 }
 
 export function Dashboard() {
+  const router = useRouter();
   const { address, isConnected, chainId } = useAccount();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: sepolia.id });
@@ -140,16 +144,28 @@ export function Dashboard() {
   const [deploying, setDeploying] = useState(false);
   const [deploySteps, setDeploySteps] = useState(initialSteps);
   const [createdAgents, setCreatedAgents] = useState<CreatedAgent[]>([]);
+  const [page, setPage] = useState<DashboardPage>("dashboard");
 
   const selectedRecords = seedAgents[agent];
   const agentName = `${cleanName(deployName) || "agent"}.${parentEnsName}`;
 
   const metrics = useMemo(() => [
-    ["Active Agents", String(3 + createdAgents.length), "seed agents plus your deployments"],
-    ["Execution Owner", address ? shortAddress(address) : "Wallet first", "connected wallet owns new agents"],
-    ["KeeperHub", health?.keeperhub?.ok ? "Online" : "Check", "authenticated execution adapter"],
-    ["Contracts", "5", "factory, registry, ERC-8004 set"]
-  ], [address, createdAgents.length, health?.keeperhub?.ok]);
+    ["Agent Directory", `${3 + createdAgents.length}`, "seed agents plus wallet-owned deployments"],
+    ["ENS Namespace", parentEnsName, "subnames resolve capabilities and wallets"],
+    ["Runtime Tools", "3", "ENS discovery, Uniswap quote, KeeperHub execution"],
+    ["Owner Wallet", address ? shortAddress(address) : "Connect", "new agents are owned by the connected wallet"]
+  ], [address, createdAgents.length]);
+
+  const titleByPage: Record<DashboardPage, string> = {
+    dashboard: "Dashboard",
+    agents: "Agent Directory",
+    executions: "Execution Feed",
+    ens: "ENS Records"
+  };
+
+  useEffect(() => {
+    if (!isConnected) router.push("/");
+  }, [isConnected, router]);
 
   useEffect(() => {
     let cancelled = false;
@@ -363,21 +379,36 @@ export function Dashboard() {
     <div className="app">
       <aside className="sidebar">
         <div className="sidebar-logo">
-          <Link className="wordmark" href="/">Agent<span>OS</span></Link>
+          <Link className="wordmark" href={isConnected ? "/dashboard" : "/"}>Agent<span>OS</span></Link>
           <div className="network-badge">Sepolia testnet</div>
         </div>
         <nav className="sidebar-nav" aria-label="Dashboard navigation">
           <div className="nav-section-label">Workspace</div>
-          {["Dashboard", "Agents", "Deploy Agent", "Executions", "ENS Records"].map((item, idx) => (
-            <button className={`nav-item ${idx === 0 ? "active" : ""}`} key={item} onClick={() => item === "Deploy Agent" && setModalOpen(true)}>
-              <span className="nav-icon" aria-hidden="true">{["D", "A", "+", "X", "E"][idx]}</span>
-              {item}
+          {[
+            ["dashboard", "D", "Dashboard"],
+            ["agents", "A", "Agents"],
+            ["deploy", "+", "Deploy Agent"],
+            ["executions", "X", "Executions"],
+            ["ens", "E", "ENS Records"]
+          ].map(([key, icon, label]) => (
+            <button
+              className={`nav-item ${page === key ? "active" : ""}`}
+              key={key}
+              onClick={() => key === "deploy" ? setModalOpen(true) : setPage(key as DashboardPage)}
+            >
+              <span className="nav-icon" aria-hidden="true">{icon}</span>
+              {label}
             </button>
           ))}
-          <div className="nav-section-label">Sponsor Docs</div>
-          <a className="nav-item" href="https://docs.keeperhub.com" target="_blank" rel="noreferrer">KeeperHub</a>
-          <a className="nav-item" href="https://developers.uniswap.org" target="_blank" rel="noreferrer">Uniswap API</a>
-          <a className="nav-item" href="https://docs.ens.domains" target="_blank" rel="noreferrer">ENS Docs</a>
+          <div className="nav-section-label">AgentOS</div>
+          <button className="nav-item" onClick={() => setPage("agents")}>
+            <span className="nav-icon" aria-hidden="true">S</span>
+            Search agents
+          </button>
+          <button className="nav-item" onClick={() => setPage("executions")}>
+            <span className="nav-icon" aria-hidden="true">R</span>
+            Runtime logs
+          </button>
         </nav>
         <div className="sidebar-bottom">
           <div className="wallet-pill">
@@ -390,31 +421,13 @@ export function Dashboard() {
       <main className="main">
         <div className="topbar">
           <div>
-            <p className="eyebrow">Agent deployment console</p>
-            <h1>User-owned onchain agents</h1>
-            <div className="status-row">
-              <span className="status-pill">{health?.keeperhub?.ok ? "KeeperHub online" : "KeeperHub check pending"}</span>
-              <span className="status-pill">{health?.uniswap ? "Uniswap API configured" : "Uniswap API missing"}</span>
-              <span className="status-pill">{health?.openai ? "OpenAI configured" : "OpenAI missing"}</span>
-            </div>
+            <p className="eyebrow">AgentOS workspace</p>
+            <h1>{titleByPage[page]}</h1>
           </div>
           <div className="topbar-actions">
             <ConnectButton />
-            <button className="primary-btn" onClick={() => setModalOpen(true)}>Deploy Agent</button>
           </div>
         </div>
-
-        <section className="hero-panel">
-          <div>
-            <p className="eyebrow">No server wallet custody</p>
-            <h2>New users connect a wallet, deploy an agent wallet, and own it directly.</h2>
-            <p>
-              The frontend calls `createAgentWalletFor(... owner ...)` with the connected wallet as owner.
-              The server only provides AI, Uniswap, and KeeperHub adapters; it does not mint user agents with a deployer key.
-            </p>
-          </div>
-          <button className="secondary-btn" onClick={() => setModalOpen(true)}>Create your first agent</button>
-        </section>
 
         <div className="metrics-row">
           {metrics.map(([label, value, sub]) => (
@@ -426,96 +439,182 @@ export function Dashboard() {
           ))}
         </div>
 
-        <div className="dashboard-grid">
-          <section className="panel">
-            <div className="panel-head">
-              <div>
-                <p className="eyebrow">Agent runtime</p>
-                <h2>Talk to demo agents</h2>
-              </div>
-              <span className="small-badge">OpenAI tools</span>
-            </div>
-            <div className="agent-tabs">
-              {(["trade", "research", "orchestrate"] as AgentKey[]).map((key) => (
-                <button className={`agent-tab ${agent === key ? "active" : ""}`} key={key} onClick={() => selectAgent(key)}>
-                  {key}.{parentEnsName}
-                </button>
-              ))}
-            </div>
-            <div className="chat-messages" aria-live="polite">
-              {messages.map((msg, idx) => (
-                <div className={`msg ${msg.role}`} key={`${msg.role}-${idx}`}>
-                  <div className="msg-bubble">{msg.text}</div>
-                  <div className="msg-meta">{msg.role === "user" ? "you" : `${agent}.${parentEnsName}`} on Sepolia</div>
-                </div>
-              ))}
-            </div>
-            <div className="suggestions">
-              {[
-                "Get a quote to swap 0.01 ETH to USDC",
-                "Resolve research.agentos.eth capabilities",
-                "Show KeeperHub execution history",
-                "Pay research.agentos.eth for a report"
-              ].map((suggestion) => (
-                <button className="suggestion-btn" key={suggestion} onClick={() => sendMessage(suggestion)}>{suggestion}</button>
-              ))}
-            </div>
-            <div className="chat-input-row">
-              <label className="sr-only" htmlFor="agent-chat-input">Message agent</label>
-              <input
-                id="agent-chat-input"
-                className="chat-input"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-                placeholder={`Message ${agent}.${parentEnsName}`}
-                autoComplete="off"
-              />
-              <button className="send-btn" onClick={() => sendMessage()}>Send</button>
-            </div>
-          </section>
-
-          <div className="right-column">
+        {page === "dashboard" ? (
+          <div className="dashboard-grid">
             <section className="panel">
               <div className="panel-head">
                 <div>
-                  <p className="eyebrow">Real deployment</p>
-                  <h2>Your agents</h2>
+                  <p className="eyebrow">Agent runtime</p>
+                  <h2>Talk to demo agents</h2>
+                </div>
+                <span className="small-badge">OpenAI tools</span>
+              </div>
+              <div className="agent-tabs">
+                {(["trade", "research", "orchestrate"] as AgentKey[]).map((key) => (
+                  <button className={`agent-tab ${agent === key ? "active" : ""}`} key={key} onClick={() => selectAgent(key)}>
+                    {key}.{parentEnsName}
+                  </button>
+                ))}
+              </div>
+              <div className="chat-messages" aria-live="polite">
+                {messages.map((msg, idx) => (
+                  <div className={`msg ${msg.role}`} key={`${msg.role}-${idx}`}>
+                    <div className="msg-bubble">{msg.text}</div>
+                    <div className="msg-meta">{msg.role === "user" ? "you" : `${agent}.${parentEnsName}`} on Sepolia</div>
+                  </div>
+                ))}
+              </div>
+              <div className="suggestions">
+                {[
+                  "Get a quote to swap 0.01 ETH to USDC",
+                  "Resolve research.agentos.eth capabilities",
+                  "Show KeeperHub execution history",
+                  "Pay research.agentos.eth for a report"
+                ].map((suggestion) => (
+                  <button className="suggestion-btn" key={suggestion} onClick={() => sendMessage(suggestion)}>{suggestion}</button>
+                ))}
+              </div>
+              <div className="chat-input-row">
+                <label className="sr-only" htmlFor="agent-chat-input">Message agent</label>
+                <input
+                  id="agent-chat-input"
+                  className="chat-input"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+                  placeholder={`Message ${agent}.${parentEnsName}`}
+                  autoComplete="off"
+                />
+                <button className="send-btn" onClick={() => sendMessage()}>Send</button>
+              </div>
+            </section>
+
+            <div className="right-column">
+              <section className="panel">
+                <div className="panel-head">
+                  <div>
+                    <p className="eyebrow">Real deployment</p>
+                    <h2>Your agents</h2>
+                  </div>
+                  <button className="tiny-btn" onClick={() => setModalOpen(true)}>New</button>
+                </div>
+                {createdAgents.length === 0 ? (
+                  <div className="empty-state">
+                    <strong>No user agents yet.</strong>
+                    <span>Deploy one with your connected wallet to create a smart wallet, ENS subname, ERC-8004 identity, and registry record.</span>
+                  </div>
+                ) : createdAgents.map((created) => (
+                  <article className="agent-card" key={created.registryTx}>
+                    <div className="agent-ens">{created.ensName}</div>
+                    <div className="agent-desc">Wallet {shortAddress(created.smartWallet)} owned by {shortAddress(created.owner)}</div>
+                    <div className="tx-row">
+                      <a href={txLink(created.factoryTx)} target="_blank" rel="noreferrer">Factory tx</a>
+                      {created.ensTx ? <a href={txLink(created.ensTx)} target="_blank" rel="noreferrer">ENS tx</a> : null}
+                      <a href={txLink(created.identityTx)} target="_blank" rel="noreferrer">Identity tx</a>
+                      <a href={txLink(created.registryTx)} target="_blank" rel="noreferrer">Registry tx</a>
+                    </div>
+                  </article>
+                ))}
+              </section>
+
+              <section className="panel">
+                <div className="panel-head">
+                  <div>
+                    <p className="eyebrow">How agents are used</p>
+                    <h2>Discovery model</h2>
+                  </div>
+                </div>
+                <div className="empty-state">
+                  <strong>Anyone can discover an agent by ENS name.</strong>
+                  <span>Resolve name.agentos.eth, read its text records, inspect specialty and endpoint, then call or pay that agent using its preferred token.</span>
+                </div>
+              </section>
+            </div>
+          </div>
+        ) : null}
+
+        {page === "agents" ? (
+          <section className="content-panel">
+            <div className="panel">
+              <div className="panel-head">
+                <div>
+                  <p className="eyebrow">Public agent directory</p>
+                  <h2>Agents discoverable through ENS</h2>
                 </div>
                 <button className="tiny-btn" onClick={() => setModalOpen(true)}>New</button>
               </div>
-              {createdAgents.length === 0 ? (
-                <div className="empty-state">
-                  <strong>No user agents yet.</strong>
-                  <span>Deploy one with your connected wallet to create a smart wallet, ENS subname, ERC-8004 identity, and registry record.</span>
-                </div>
-              ) : createdAgents.map((created) => (
-                <article className="agent-card" key={created.registryTx}>
-                  <div className="agent-ens">{created.ensName}</div>
-                  <div className="agent-desc">Wallet {shortAddress(created.smartWallet)} owned by {shortAddress(created.owner)}</div>
-                  <div className="tx-row">
-                    <a href={txLink(created.factoryTx)} target="_blank" rel="noreferrer">Factory tx</a>
-                    {created.ensTx ? <a href={txLink(created.ensTx)} target="_blank" rel="noreferrer">ENS tx</a> : null}
-                    <a href={txLink(created.identityTx)} target="_blank" rel="noreferrer">Identity tx</a>
-                    <a href={txLink(created.registryTx)} target="_blank" rel="noreferrer">Registry tx</a>
-                  </div>
-                </article>
-              ))}
-            </section>
+              <div className="directory-grid">
+                {(["trade", "research", "orchestrate"] as AgentKey[]).map((key) => (
+                  <article className="agent-directory-card" key={key}>
+                    <div className="agent-ens">{key}.{parentEnsName}</div>
+                    <p>{seedAgents[key].specialty}</p>
+                    <div className="agent-tags">
+                      <span className="tag tag-active">discoverable</span>
+                      <span className="tag tag-res">{seedAgents[key].preferred_token}</span>
+                    </div>
+                    <button className="secondary-inline" onClick={() => { selectAgent(key); setPage("dashboard"); }}>Chat with agent</button>
+                  </article>
+                ))}
+                {createdAgents.map((created) => (
+                  <article className="agent-directory-card" key={created.registryTx}>
+                    <div className="agent-ens">{created.ensName}</div>
+                    <p>Wallet {shortAddress(created.smartWallet)} is owned by {shortAddress(created.owner)}.</p>
+                    <div className="agent-tags">
+                      <span className="tag tag-active">user-owned</span>
+                      <span className="tag tag-ens">ENS minted</span>
+                    </div>
+                    <div className="tx-row">
+                      {created.ensTx ? <a href={txLink(created.ensTx)} target="_blank" rel="noreferrer">ENS tx</a> : null}
+                      <a href={txLink(created.registryTx)} target="_blank" rel="noreferrer">Registry tx</a>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          </section>
+        ) : null}
 
-            <section className="panel">
+        {page === "executions" ? (
+          <section className="content-panel">
+            <div className="panel">
               <div className="panel-head">
                 <div>
-                  <p className="eyebrow">Discovery metadata</p>
-                  <h2>Agent records</h2>
+                  <p className="eyebrow">Execution feed</p>
+                  <h2>Uniswap and KeeperHub runtime</h2>
                 </div>
               </div>
-              <select className="select" value={agent} onChange={(e) => setAgent(e.target.value as AgentKey)} aria-label="Select seed agent">
+              {healthError ? <div className="error-box">{healthError}</div> : null}
+              {[
+                ["Uniswap quote", "Live agent requests call the backend Trading API tool before swap preparation.", health?.uniswap ? "configured" : "needs API key"],
+                ["KeeperHub route", "Prepared transactions can be submitted to KeeperHub Direct Execution for retries and audit trails.", health?.keeperhub?.ok ? "authenticated" : health?.keeperhub?.message || "checking"],
+                ["Owner model", "Agent smart wallets are deployed for the connected wallet owner, not a server deployer key.", address ? shortAddress(address) : "connect wallet"],
+                ["Registry proof", "Successful deployments write factory, ENS, identity, and registry transaction hashes.", `${createdAgents.length} user agents`]
+              ].map(([title, desc, status]) => (
+                <div className="activity" key={title}>
+                  <div className="act-title">{title}</div>
+                  <div className="act-desc">{desc}</div>
+                  <div className="act-meta"><span>{status}</span></div>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {page === "ens" ? (
+          <section className="content-panel">
+            <div className="panel">
+              <div className="panel-head">
+                <div>
+                  <p className="eyebrow">ENS resolver data</p>
+                  <h2>Capability text records</h2>
+                </div>
+              </div>
+              <select className="select records-select" value={agent} onChange={(e) => setAgent(e.target.value as AgentKey)} aria-label="Select seed agent">
                 <option value="trade">trade.{parentEnsName}</option>
                 <option value="research">research.{parentEnsName}</option>
                 <option value="orchestrate">orchestrate.{parentEnsName}</option>
               </select>
-              <div className="records">
+              <div className="records records-wide">
                 <div className="record-title">{agent}.{parentEnsName}</div>
                 {Object.entries(selectedRecords).map(([key, value]) => (
                   <div className="record-row" key={key}>
@@ -524,31 +623,13 @@ export function Dashboard() {
                   </div>
                 ))}
               </div>
-            </section>
-
-            <section className="panel">
-              <div className="panel-head">
-                <div>
-                  <p className="eyebrow">System health</p>
-                  <h2>Execution stack</h2>
-                </div>
+              <div className="empty-state">
+                <strong>How the orchestrator chooses agents</strong>
+                <span>The orchestrator resolves ENS, reads specialty, fee, endpoint, preferred_token, and reputation, then routes the task to the matching agent. Research tasks go to research agents; swap and payment tasks go to trade agents.</span>
               </div>
-              {healthError ? <div className="error-box">{healthError}</div> : null}
-              <div className="activity">
-                <div className="act-title">KeeperHub</div>
-                <div className="act-meta"><span>{health?.keeperhub?.ok ? "Authenticated" : health?.keeperhub?.message || "Checking"}</span></div>
-              </div>
-              <div className="activity">
-                <div className="act-title">Executor address</div>
-                <div className="act-meta"><span>{shortAddress(health?.executorAddress)}</span></div>
-              </div>
-              <div className="activity">
-                <div className="act-title">Factory</div>
-                <div className="act-meta"><span>{shortAddress(sepoliaContracts.factory)}</span></div>
-              </div>
-            </section>
-          </div>
-        </div>
+            </div>
+          </section>
+        ) : null}
       </main>
 
       <div className={`modal-backdrop ${modalOpen ? "open" : ""}`} onClick={(e) => e.currentTarget === e.target && !deploying && setModalOpen(false)}>

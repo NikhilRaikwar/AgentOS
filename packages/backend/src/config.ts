@@ -1,8 +1,14 @@
 import dotenv from "dotenv";
 import path from "node:path";
 
-dotenv.config();
-dotenv.config({ path: path.resolve(process.cwd(), "../../.env") });
+[
+  ".env",
+  "../../.env",
+  "../../../.env",
+  "../.env"
+].forEach((envPath) => {
+  dotenv.config({ path: path.resolve(process.cwd(), envPath), override: false });
+});
 
 export const config = {
   port: Number(process.env.PORT || 3001),
