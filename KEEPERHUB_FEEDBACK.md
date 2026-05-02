@@ -1,19 +1,24 @@
 # KeeperHub Feedback - AgentOS Integration
 
-AgentOS uses KeeperHub as the execution and reliability layer for ENS-named AI agents. The backend prepares Uniswap Trading API transactions, wraps them in `AgentSmartWallet.execute(...)`, and submits them to KeeperHub Direct Execution.
+AgentOS uses KeeperHub as the execution and reliability layer for ENS-named AI agents. The backend prepares Uniswap Trading API transactions, wraps them in `AgentSmartWallet.execute(...)`, and submits them through KeeperHub Direct Execution.
 
-## What We Built
+This feedback is based on the real AgentOS Sepolia integration.
 
-- KeeperHub MCP login and tool usage.
-- KeeperHub organization API key configured for REST Direct Execution.
-- Direct contract-call execution from KeeperHub.
+## Integration Summary
+
+What we built:
+
+- KeeperHub MCP login for development/debugging.
+- KeeperHub organization API key for REST Direct Execution.
+- KeeperHub organization wallet funded on Sepolia.
+- Direct contract-call execution.
 - Smart-wallet execution path:
-  - KeeperHub wallet is set as the agent smart-wallet executor.
-  - The smart wallet allowlists Sepolia USDC, Permit2, and Uniswap Universal Router.
+  - KeeperHub wallet is configured as the execution caller.
+  - The agent smart wallet allowlists Sepolia USDC, Permit2, and Uniswap Universal Router.
   - KeeperHub calls `AgentSmartWallet.execute(target,value,data)`.
 - Runtime status polling through:
 
-```txt
+```text
 GET /execute/{executionId}/status
 ```
 
@@ -26,164 +31,229 @@ Latest successful proof:
 
 ## What Worked Well
 
-### MCP tools were useful for debugging
-
-The `get_direct_execution_status` MCP tool was very useful. It showed:
-
-```txt
-status: failed
-error: Contract call failed: Error(CALL_FAILED)
-transactionHash: null
-```
-
-That told us the failure happened before a transaction landed onchain.
-
 ### Direct Execution worked for real smart-wallet calls
 
 KeeperHub successfully executed:
 
-- `AgentSmartWallet.execute(USDC.approve(Permit2))`
-- `AgentSmartWallet.execute(UniswapUniversalRouter.execute(...))`
-
-This is the core value for AgentOS: the AI agent does not need a private key to broadcast the final transaction. KeeperHub performs the last-mile execution while the agent wallet stays scoped to allowlisted targets.
-
-### Status endpoint is practical
-
-The REST status endpoint:
-
-```txt
-/execute/{executionId}/status
+```text
+AgentSmartWallet.execute(USDC.approve(Permit2))
+AgentSmartWallet.execute(UniswapUniversalRouter.execute(...))
 ```
 
-returns the transaction hash after completion. This is important because public proof should be the Etherscan transaction, not a private KeeperHub dashboard page.
+This is the core value for AgentOS. The AI agent does not need to hold a private key. KeeperHub performs the last-mile execution while the agent smart wallet stays scoped to allowlisted targets.
 
-## Issues We Hit
+### MCP helped during debugging
 
-### 1. Dashboard execution links are private
+After logging in with:
 
-The app link format:
+```text
+codex mcp login keeperhub
+```
 
-```txt
+the MCP status tooling helped us inspect failed Direct Execution runs and confirm whether a run failed before broadcast or completed with a transaction hash.
+
+### Status endpoint returns public proof
+
+The REST status endpoint returns the transaction hash after completion. That is important because public users need Etherscan proof, while the KeeperHub dashboard itself is private to the organization.
+
+## UX and UI Friction
+
+### 1. Dashboard run links are private but look shareable
+
+We initially tried to show links like:
+
+```text
 https://app.keeperhub.com/executions/{executionId}
 ```
 
-can 404 for users who are not part of the KeeperHub organization. This is expected for a private operator dashboard, but it is confusing in a public demo.
+For users outside the organization, these links can show 404 or no data. This is reasonable from a security perspective, but it is confusing during a public demo.
 
-Our fix:
+How we handled it:
 
-- Show the KeeperHub run ID as an operator audit reference.
-- Show Etherscan transaction links as public proof.
-- Store the latest tx hash and KeeperHub run ID in ENS text records.
+- Show Etherscan transaction links as the public proof.
+- Show KeeperHub run IDs as operator audit references.
+- Add an option to write `agentos.lastExecutionTx` and `agentos.lastKeeperHubRun` into ENS text records.
 
-Suggestion:
+Actionable suggestion:
 
-Document that dashboard links are private and recommend how apps should expose public proof:
+Add a public-safe execution proof view:
 
-```txt
-executionId + status + txHash + explorer link
+```text
+https://app.keeperhub.com/public/executions/{executionId}
 ```
 
-### 2. Workflow status tool and Direct Execution status tool are different
+It could show only non-sensitive fields:
 
-At first we tried `get_execution_status` for a Direct Execution ID and got a 404. The correct MCP tool is `get_direct_execution_status`.
+- status
+- network
+- transaction hash
+- timestamp
+- retry count
 
-Suggestion:
+### 2. It was not obvious which wallet needed funds
 
-In MCP docs, add a clear table:
+KeeperHub has an organization wallet, and AgentOS agents have their own smart wallets. During integration, we had to reason carefully about which wallet pays gas and which wallet holds the token being swapped.
 
-| ID source | Correct status tool |
-|---|---|
-| `execute_workflow` | `get_execution_status` |
-| `execute_contract_call` / Direct Execution | `get_direct_execution_status` |
+For our working path:
 
-### 3. CALL_FAILED does not expose revert detail
+- KeeperHub organization wallet pays execution/gas.
+- Agent smart wallet holds USDC.
+- Agent smart wallet must authorize allowed targets.
+- Agent smart wallet must approve Permit2.
 
-When the swap failed, KeeperHub returned:
+Actionable suggestion:
 
-```txt
+Add a Direct Execution diagram that separates:
+
+```text
+executor wallet
+gas funding wallet
+asset-holding wallet
+target contract
+```
+
+This would help teams building agent wallets.
+
+## Reproducible Bugs / Failures We Hit
+
+### 1. `CALL_FAILED` when token allowance was missing
+
+Failure:
+
+```text
 Contract call failed: Error(CALL_FAILED)
 ```
 
-That was accurate, but the root cause was inside the called contract path. In our case, USDC allowance to Permit2 was missing.
+Context:
 
-We diagnosed it by manually checking:
+- Agent smart wallet had USDC.
+- KeeperHub wallet was authorized.
+- Smart wallet allowed targets were set.
+- But USDC allowance from the agent smart wallet to Permit2 was missing.
 
-- agent wallet USDC balance
-- smart-wallet executor
-- smart-wallet allowed targets
-- USDC allowance to Permit2
-- Permit2 allowance to Universal Router
+Fix:
 
-Suggestion:
+```text
+1. Run Uniswap /check_approval
+2. Execute returned USDC approval through KeeperHub
+3. Retry swap execution
+```
 
-If possible, include decoded revert data or call trace hints for failed simulations. Even a best-effort note like "inner call reverted inside target" would help.
+Actionable suggestion:
 
-### 4. Native ETH value forwarding needs clearer guidance
+For `CALL_FAILED`, include more diagnostic hints when possible:
 
-Native ETH swaps through Universal Router require `msg.value`. When using wrapper contracts or execution services, value must be forwarded through each layer.
+- target contract
+- function selector
+- decoded revert reason if available
+- whether the failure occurred during simulation or after broadcast
+- inner call target if the call was a smart-wallet wrapper
 
-Our final demo uses ERC20 `USDC -> WETH` because it works cleanly with Direct Execution and avoids native value forwarding problems.
+Even a best-effort message like "inner call reverted in target contract" would save time.
 
-Suggestion:
+### 2. Direct Execution status tool vs workflow status tool
+
+At first we mixed up workflow status and Direct Execution status. A Direct Execution ID should be checked with the Direct Execution status path/tool, not the workflow status path.
+
+Actionable suggestion:
+
+Add a clear table to the MCP/API docs:
+
+| ID source | Correct status method |
+|---|---|
+| Workflow run | workflow status |
+| Direct contract-call execution | direct execution status |
+
+### 3. Native ETH value forwarding was unclear
+
+Native ETH → token swaps through Universal Router require `msg.value`. When using KeeperHub plus a smart-wallet wrapper, value must be forwarded through each layer.
+
+Our final demo used ERC20 `USDC -> WETH` because that path works cleanly with Direct Execution and avoids payable forwarding ambiguity.
+
+Actionable suggestion:
 
 Add examples for:
 
-- payable `execute_contract_call`
-- smart-wallet wrapper with value
-- Universal Router ETH swap through KeeperHub
+- payable Direct Execution calls
+- Universal Router native ETH swaps
+- wrapper contract calls with value
+- `AgentSmartWallet.execute(target,value,data)` style execution
 
-### 5. API base and key type should be clearer
+## Documentation Gaps
 
-We needed an organization API key with the correct prefix and REST permissions. It would help to show the exact key type needed for Direct Execution vs. MCP login.
+### Organization API key setup
 
-Suggestion:
+We needed an organization API key with the correct REST permissions. The difference between MCP login and REST organization API keys should be more explicit.
 
-Add setup checklist:
+Suggested setup checklist:
 
-```txt
-1. Create organization.
+```text
+1. Create KeeperHub organization.
 2. Fund organization wallet on target testnet.
-3. Create organization API key.
+3. Create organization API key for REST Direct Execution.
 4. Confirm /user returns walletAddress.
-5. Use MCP login for CLI debugging.
+5. Use MCP login separately for local debugging.
+```
+
+### Direct Execution request shape
+
+The Direct Execution API is powerful, but agent developers would benefit from more examples showing ABI, function name, function args, network, and value formatting.
+
+Suggested example:
+
+```json
+{
+  "network": "sepolia",
+  "contractAddress": "0x...",
+  "functionName": "execute",
+  "functionArgs": "[\"0xTarget\",\"0\",\"0xData\"]",
+  "abi": "[...]",
+  "value": "0",
+  "metadata": {
+    "agent": "tradedemo.agentos.eth",
+    "source": "agentos"
+  }
+}
 ```
 
 ## Feature Requests
 
 ### Public execution proof endpoint
 
-A public read-only endpoint for execution status would be useful:
+Useful for hackathon demos and production apps:
 
-```txt
-https://app.keeperhub.com/public/executions/{executionId}
+```text
+GET /public/executions/{executionId}
 ```
 
-It could show non-sensitive fields:
+It should expose only safe fields:
 
 - status
 - network
-- tx hash
+- transaction hash
 - created/completed time
 - retry count
 
 ### Better revert diagnostics
 
-For `CALL_FAILED`, return:
+For failed simulations, include:
 
-- decoded revert reason if available
+- decoded revert reason
 - target contract address
 - function selector
-- whether failure happened in simulation or after broadcast
+- wrapper target if calldata calls a smart-wallet `execute`
 
 ### Agent framework examples
 
-An example showing:
+An example showing this exact loop would help:
 
-```txt
-OpenAI tool call -> prepare calldata -> KeeperHub execute_contract_call -> poll status -> write tx proof
+```text
+OpenAI tool call
+-> prepare calldata
+-> KeeperHub execute_contract_call
+-> poll status
+-> write tx proof to ENS
 ```
-
-would match exactly what agent builders need.
 
 ## Developer Experience Rating
 
@@ -192,22 +262,23 @@ would match exactly what agent builders need.
 Strong:
 
 - Direct Execution works for real transactions.
-- MCP status tool helped debugging.
+- MCP helped debugging.
 - Organization wallet model is useful for agent infrastructure.
 - Status endpoint returns tx hash for public proof.
 
 Could improve:
 
-- More explicit Direct Execution vs. Workflow docs.
+- More explicit Direct Execution vs Workflow docs.
 - Public-safe execution proof links.
 - Better revert diagnostics.
 - More payable/native ETH examples.
+- Clearer setup path for organization API keys.
 
 ## Final Note
 
 KeeperHub became the reliability layer for AgentOS. The most important integration pattern is:
 
-```txt
+```text
 AI agent prepares intent
 Uniswap prepares calldata
 AgentSmartWallet restricts allowed targets
@@ -215,4 +286,4 @@ KeeperHub executes and returns tx proof
 ENS stores latest execution memory
 ```
 
-This is a real agent execution loop, not just a simulated workflow.
+This is a real agent execution loop, not a simulated workflow.

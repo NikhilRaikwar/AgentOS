@@ -1,26 +1,29 @@
-# FEEDBACK.md - Uniswap Trading API Feedback
+# Uniswap Trading API Feedback - AgentOS
 
-This file is focused on the Uniswap integration in AgentOS.
+AgentOS uses the Uniswap Trading API as the financial rail for ENS-named AI agents. Agents request quotes, check approvals, prepare swap calldata, and route final execution through KeeperHub from a user-owned agent smart wallet.
 
-AgentOS uses the Uniswap Trading API as the financial rail for ENS-named AI agents. Agents request quotes, prepare approvals, prepare swap calldata, and route the final onchain execution through KeeperHub from a user-owned agent smart wallet.
+This feedback is based on the real AgentOS Sepolia integration, not a mock flow.
 
-## What We Built
+## Integration Summary
 
-- OpenAI tool `uniswap_get_quote`
+What we built:
+
+- OpenAI tool: `uniswap_get_quote`
 - ERC20 approval check through `/check_approval`
 - Quotes through `/quote`
 - Swap calldata through `/swap`
-- Smart-wallet execution through `AgentSmartWallet.execute(...)`
-- KeeperHub-routed settlement for the final approval and swap transactions
+- Smart-wallet wrapping through `AgentSmartWallet.execute(...)`
+- KeeperHub-routed approval and swap execution
+- Public Etherscan proof surfaced in the AgentOS dashboard
 
-Successful latest demo:
+Successful demo path:
 
 - Chain: Sepolia
+- Agent: `tradedemo.agentos.eth`
+- Agent wallet: `0x3f962D91813D7a2230580EA11475305FC6Ef6F7E`
 - Path: `USDC -> WETH`
 - Input: `1 USDC`
 - Output: `0.000122895544056695 WETH`
-- Agent: `tradedemo.agentos.eth`
-- Agent wallet: `0x3f962D91813D7a2230580EA11475305FC6Ef6F7E`
 - Approval tx: https://sepolia.etherscan.io/tx/0x25d8d843eacb894c9d575d3a770be7fb3dd99aa138a09c9aef02d3f224443b35
 - Swap tx: https://sepolia.etherscan.io/tx/0xbc7bdf9a6bd1fe4fe627835b75c13681c65a5d9b30f16321a1b0f65ef2282293
 
@@ -28,66 +31,90 @@ Successful latest demo:
 
 ### `/quote`
 
-The quote endpoint was reliable for the Sepolia USDC/WETH pair. The route response was detailed enough for an agent to explain expected output, gas, and price impact before asking the user to confirm.
+The quote endpoint worked well for the Sepolia USDC/WETH pair. The response gave enough information for the AI agent to explain:
+
+- expected output
+- price impact
+- estimated gas
+- route details
+
+This is important for agentic finance because the agent should explain the trade before asking the user to confirm execution.
 
 ### `/check_approval`
 
-This endpoint is essential for agent-wallet flows. It returns a ready-to-execute approval transaction, which is exactly what an autonomous execution layer needs.
+This was the most important endpoint for our smart-wallet flow. It returned a ready-to-execute approval transaction, which we could wrap through:
 
-The clean `approval: null` behavior is also helpful because the agent can skip redundant approval calls after allowance exists.
+```text
+AgentSmartWallet.execute(USDC, 0, approve(Permit2, amount))
+```
+
+The `approval: null` behavior is also useful because the agent can skip redundant approvals once allowance already exists.
 
 ### `/swap`
 
-Once the quote response is passed correctly, `/swap` produces Universal Router calldata that can be wrapped in `AgentSmartWallet.execute(...)` and submitted through KeeperHub.
+Once we passed the quote response correctly, `/swap` produced Universal Router calldata that could be submitted through the agent smart wallet and KeeperHub.
 
 ### `generatePermitAsTransaction`
 
-This option is very useful for agent infrastructure. It avoids requiring a browser EIP-712 signature for Permit2 and makes the flow compatible with relayers/execution services.
+This is very useful for agent infrastructure. Browser-based EIP-712 signatures are not always a good fit for automated agents, relayers, or execution services. Returning a Permit2 transaction makes the flow easier to compose with execution infrastructure.
 
-## Issues We Hit
+## Bugs and Issues We Hit
 
-### 1. Agent smart wallet needed `/check_approval` before swap
+### 1. Smart-wallet approval had to happen from the exact `swapper`
 
 Our first KeeperHub-routed swap failed with:
 
-```txt
+```text
 Contract call failed: Error(CALL_FAILED)
 ```
 
-The agent wallet had USDC and KeeperHub was authorized as executor, but USDC allowance from the agent smart wallet to Permit2 was `0`.
+The agent wallet had USDC, and KeeperHub was authorized as the executor, but the USDC allowance from the agent smart wallet to Permit2 was `0`.
 
-The fix was:
+The working sequence was:
 
-```txt
-/check_approval
--> AgentSmartWallet.execute(USDC approve Permit2)
--> /swap
--> AgentSmartWallet.execute(Universal Router calldata)
+```text
+1. /check_approval
+2. AgentSmartWallet.execute(USDC approve Permit2)
+3. /quote
+4. /swap
+5. AgentSmartWallet.execute(Universal Router calldata)
 ```
 
-After this, the same agent-wallet swap completed successfully.
+Actionable suggestion:
 
-Suggestion:
+Add an "agent smart wallet / contract wallet" guide that makes this rule explicit:
 
-Add an "agent smart wallet" guide showing that `/check_approval` must be executed from the same address used as `swapper`, especially when `swapper` is a smart wallet instead of the connected EOA.
+```text
+The address passed as swapper must be the same address that owns funds and sets approval.
+```
 
-### 2. `/swap` request shape is easy to get wrong
+This matters a lot for agents because the connected EOA, smart wallet, relayer, and execution wallet may all be different addresses.
 
-The `/swap` endpoint expects the quote response fields at the top level. It does not expect:
+### 2. `/swap` request body shape was easy to get wrong
+
+At first, we wrapped the quote response like this:
 
 ```json
-{ "quote": { "...": "..." } }
+{
+  "quoteResponse": {
+    "...": "..."
+  }
+}
 ```
 
-The correct pattern is to spread the quote response into the swap request.
+That did not match the expected `/swap` body. The correct approach is to pass the quote response fields at the top level.
 
-Suggestion:
+Actionable suggestion:
 
-Add a copy-paste TypeScript example showing:
+Add a copy-paste TypeScript example:
 
 ```ts
-const swap = await fetch("/swap", {
+const swapResponse = await fetch(`${UNISWAP_API_BASE}/swap`, {
   method: "POST",
+  headers: {
+    "content-type": "application/json",
+    "x-api-key": UNISWAP_API_KEY
+  },
   body: JSON.stringify({
     ...quoteResponse,
     signature
@@ -95,48 +122,76 @@ const swap = await fetch("/swap", {
 });
 ```
 
-### 3. Native ETH swaps are harder with execution services
+### 3. Native ETH swaps are harder through execution wrappers
 
-Native ETH paths require `msg.value` to reach the Universal Router call. When the transaction is routed through an execution service or smart wallet wrapper, the developer must make sure value is forwarded at every layer.
+Native ETH routes require `msg.value` to reach Universal Router. When the transaction passes through an execution service or a smart-wallet wrapper, value must be forwarded through every layer.
 
-Our final successful demo used ERC20 `USDC -> WETH`, because that path avoids payable forwarding issues and works cleanly with Permit2.
+Our final successful demo used ERC20 `USDC -> WETH` because the ERC20 path works cleanly with Permit2 and avoids native value forwarding ambiguity.
 
-Suggestion:
+Actionable suggestion:
 
-Add docs for native ETH swaps through:
+Add examples for native ETH swaps through:
 
-- smart wallets
+- contract wallets
 - relayers
 - execution services
-- contract-call wrappers
+- wrapper contracts such as `AgentSmartWallet.execute(target,value,data)`
 
 ### 4. Sepolia liquidity is inconsistent
 
-Some Sepolia routes returned no quote depending on token pair and amount. USDC/WETH worked best for us.
+Some Sepolia token pairs returned "No quotes available." USDC/WETH worked reliably for us after testing amounts.
 
-Suggestion:
+Actionable suggestion:
 
-Publish a short list of recommended testnet token pairs, token addresses, and known-working amounts.
+Publish a small "known-working testnet pairs" table:
 
-## Missing Features That Would Help Agents
+| Chain | Pair | Suggested amount |
+|---|---|---|
+| Sepolia | USDC/WETH | 1 USDC |
 
-### Batch quote endpoint
+This would save hackathon teams time.
 
-Agents often need to compare multiple routes or rebalance across several assets. A batch `/quotes` endpoint would reduce latency and rate-limit pressure.
+## Documentation Gaps
+
+The docs are strong for standard app swaps, but agentic execution needs more examples for:
+
+- smart-wallet `swapper` addresses
+- Permit2 approval from contract wallets
+- relayer/execution service flows
+- how to store and reuse quote state safely between "quote" and "yes, execute"
+- recommended testnet token pairs
+
+## Feature Requests
 
 ### Agent state endpoint
 
-A single endpoint that returns balances, ERC20 approval status, Permit2 status, and suggested next transaction would be very useful.
+Agents need to know the full execution readiness of a wallet before preparing transactions.
 
-Example:
+Suggested endpoint:
 
-```txt
-GET /agent-state?wallet=0x...&token=0x...&spender=router
+```text
+GET /agent-state?wallet=0x...&token=0x...&spender=0x...
 ```
 
-### Webhook for order/swap state
+Useful response:
 
-Agents should not poll aggressively. A webhook or WebSocket for order status would make agent runtimes cleaner and cheaper.
+```json
+{
+  "balance": "...",
+  "erc20Allowance": "...",
+  "permit2Allowance": "...",
+  "needsApproval": true,
+  "recommendedNextAction": "check_approval"
+}
+```
+
+### Batch quote endpoint
+
+Agents often compare multiple assets or payment routes. A batch quote endpoint would reduce latency and rate-limit pressure.
+
+### Webhook or stream for execution/order state
+
+Agents should not need aggressive polling. A webhook or WebSocket for swap/order state would make agent runtimes cleaner.
 
 ## Developer Experience Rating
 
@@ -147,15 +202,15 @@ Strong:
 - Good quote quality.
 - Good transaction preparation.
 - `/check_approval` is exactly the right primitive.
-- `generatePermitAsTransaction` is very useful for agentic execution.
+- `generatePermitAsTransaction` is very useful for agent execution.
 
 Could improve:
 
 - More smart-wallet examples.
 - More relayer/KeeperHub-style examples.
-- Clearer `/swap` request body examples.
+- Clearer `/swap` body examples.
 - Recommended testnet pairs.
 
 ## Final Note
 
-Uniswap worked well as the financial rail for AgentOS. The biggest learning was that the `swapper` address must be treated as the actual execution wallet. In our case, that means the ENS-named agent smart wallet must hold funds and must be the address that approves Permit2 before the Universal Router swap runs.
+Uniswap worked well as the financial rail for AgentOS. The key learning was that the `swapper` address must be treated as the actual execution wallet. In AgentOS, that means the ENS-named agent smart wallet must hold funds and must approve Permit2 before the Universal Router swap can execute.
