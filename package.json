@@ -1,0 +1,20 @@
+{
+  "name": "agentfi-os",
+  "private": true,
+  "version": "0.1.0",
+  "description": "ENS-named, Uniswap-powered, KeeperHub-executed AI agents.",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace backend & npm run dev --workspace frontend",
+    "build": "npm run build --workspaces",
+    "lint": "npm run lint --workspaces",
+    "contracts:compile": "npm run compile --workspace contracts",
+    "contracts:test": "npm run test --workspace contracts",
+    "contracts:deploy": "npm run deploy:sepolia --workspace contracts"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}
