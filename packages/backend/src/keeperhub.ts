@@ -63,6 +63,7 @@ export async function submitTransaction(params: {
   const tx = params.tx as { to?: string; data?: string; value?: string | number | bigint; chainId?: number };
   if (!tx.to || !isAddress(tx.to)) throw new Error("KeeperHub execution requires tx.to");
   if (!tx.data || !isHex(tx.data as `0x${string}`)) throw new Error("KeeperHub execution requires hex tx.data");
+  const valueWei = normalizeWei(tx.value);
 
   const decoded = decodeFunctionData({
     abi: universalRouterAbi,
@@ -77,7 +78,7 @@ export async function submitTransaction(params: {
       typeof value === "bigint" ? value.toString() : value
     ),
     abi: JSON.stringify(universalRouterAbi),
-    value: String(tx.value || "0"),
+    value: valueWei,
     gasLimitMultiplier: "1.25",
     metadata: {
       agent: params.agentEnsName,
@@ -122,4 +123,11 @@ function networkName(chainId: number) {
     1301: "unichain-sepolia"
   };
   return networks[chainId] || "sepolia";
+}
+
+function normalizeWei(value: string | number | bigint | undefined) {
+  if (value === undefined || value === null || value === "") return "0";
+  if (typeof value === "bigint") return value.toString();
+  if (typeof value === "number") return BigInt(value).toString();
+  return BigInt(value).toString();
 }
