@@ -1,0 +1,20 @@
+{
+  "name": "contracts",
+  "private": true,
+  "scripts": {
+    "compile": "set APPDATA=.hardhat-global&& set LOCALAPPDATA=.hardhat-global&& hardhat compile",
+    "test": "set APPDATA=.hardhat-global&& set LOCALAPPDATA=.hardhat-global&& hardhat test",
+    "deploy:sepolia": "set APPDATA=.hardhat-global&& set LOCALAPPDATA=.hardhat-global&& hardhat run scripts/deploy.ts --network sepolia",
+    "build": "set APPDATA=.hardhat-global&& set LOCALAPPDATA=.hardhat-global&& hardhat compile",
+    "lint": "set APPDATA=.hardhat-global&& set LOCALAPPDATA=.hardhat-global&& hardhat compile"
+  },
+  "dependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@openzeppelin/contracts": "^5.6.1",
+    "dotenv": "^16.4.7",
+    "hardhat": "^2.22.17"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}
