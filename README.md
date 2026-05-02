@@ -45,6 +45,133 @@ flowchart TD
 | `research.agentos.eth` | DeFi research agent | Discoverable service profile | Receives payment in preferred token |
 | `orchestrate.agentos.eth` | Multi-agent coordinator | Resolves and hires agents | Routes agent payments |
 
+## Full Demo Flow
+
+Use this sequence for the ETHGlobal demo video or live judge walkthrough.
+
+### 1. Show the landing page
+
+Open `http://localhost:3000`.
+
+Explain:
+
+- AgentOS is an operating layer for onchain AI agents.
+- ENS gives each agent a persistent name and discovery records.
+- Uniswap gives each agent financial execution and payment routing.
+- KeeperHub gives reliable transaction delivery and auditability.
+
+### 2. Connect a wallet
+
+Click **Connect Wallet** and connect the Sepolia wallet that will own the new agent.
+
+Key point:
+
+- The user wallet signs the deployment.
+- The server does not custody the user private key.
+- The deployer key is not used for normal user agent creation.
+
+### 3. Deploy a new agent
+
+Open the dashboard and click **Deploy Agent**.
+
+Example inputs:
+
+```text
+Agent name: trade
+Specialty: trading,defi,rebalancing
+Preferred token: USDC
+Fee: 0.001 ETH
+```
+
+The app executes four wallet-signed transactions:
+
+1. `AgentWalletFactory.createAgentWalletFor(...)`
+   - Creates a smart wallet.
+   - Sets the connected wallet as owner.
+   - Sets the backend executor as an allowed executor.
+
+2. `AgentSubnameRegistrar.register(...)`
+   - Mints `trade.agentos.eth`.
+   - Sets the resolver address.
+   - Writes resolver text records such as `specialty`, `fee`, `endpoint`, `preferred_token`, `framework`, `reputation`, and `wallet_type`.
+   - Points the ENS address record at the agent smart wallet.
+
+3. `AgentIdentityRegistry8004.registerWithWallet(...)`
+   - Mints an ERC-8004-style identity NFT to the connected wallet.
+   - Binds the identity to the agent smart wallet.
+   - Stores machine-readable agent metadata.
+
+4. `AgentRegistry.registerAgent(...)`
+   - Indexes the agent for AgentOS discovery.
+   - Links the ENS node, ENS name, smart wallet, and owner.
+
+### 4. Validate ENS
+
+Open the Sepolia ENS app and search the created subname, for example:
+
+```text
+trade.agentos.eth
+```
+
+Validate:
+
+- The subname exists.
+- The address record points to the deployed smart wallet.
+- Text records contain the agent capability metadata.
+- `agentos.eth` manager is the registrar contract:
+
+```text
+0x3ccF94F8B4E5Dd6886A7cbcb2f3C52482dA4ff9E
+```
+
+### 5. Use the agent runtime
+
+In the dashboard chat, ask:
+
+```text
+Get a quote to swap 0.01 ETH to USDC
+```
+
+The backend OpenAI agent can call tools for:
+
+- ENS discovery.
+- Uniswap quote preparation.
+- KeeperHub execution history/status.
+
+The important demo point is that the agent does not just chat. It uses real sponsor infrastructure as tools.
+
+### 6. Validate Uniswap
+
+The Uniswap integration uses the Trading API through the backend.
+
+Demo:
+
+- Ask for an ETH -> USDC quote.
+- Show that the app calls Uniswap for route/price discovery.
+- Show that swap calldata can be prepared for Universal Router execution.
+
+### 7. Validate KeeperHub
+
+Open `http://localhost:3001/health`.
+
+Validate:
+
+- `keeperhub.ok` is `true`.
+- The backend is authenticated with the KeeperHub organization key.
+- Prepared swap calldata is routed to KeeperHub Direct Execution through `/execute/contract-call`.
+
+KeeperHub is the reliability layer: retries, gas handling, private routing, and audit trails.
+
+### 8. Explain the full loop
+
+The final story:
+
+```text
+User wallet -> Agent smart wallet -> ENS subname -> ERC-8004 identity -> Uniswap execution -> KeeperHub reliability -> reputation update
+```
+
+That is the core AgentOS primitive: named, discoverable, user-owned, self-paying onchain agents.
+
 ## Sepolia Deployment
 
 ```text
