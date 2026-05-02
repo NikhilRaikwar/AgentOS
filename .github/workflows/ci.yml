@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install root dependencies
+        run: npm install
+
+      - name: Install backend dependencies
+        working-directory: packages/backend
+        run: npm install --workspaces=false
+
+      - name: Install frontend dependencies
+        working-directory: packages/frontend
+        run: npm install --workspaces=false
+
+      - name: Install contract dependencies
+        working-directory: packages/contracts
+        run: npm install --workspaces=false
+
+      - name: Build backend
+        working-directory: packages/backend
+        run: npm run build
+
+      - name: Compile contracts
+        working-directory: packages/contracts
+        run: npm run build
+
+      - name: Build frontend
+        working-directory: packages/frontend
+        run: npm run build
+        env:
+          NEXT_PUBLIC_APP_NAME: AgentFi OS
+          NEXT_PUBLIC_API_URL: http://localhost:3001
+          NEXT_PUBLIC_CHAIN_ID: "11155111"
+          NEXT_PUBLIC_PARENT_ENS_NAME: agentos.eth
+          NEXT_PUBLIC_WALLETCONNECT_ID: agentfi-os-ci
