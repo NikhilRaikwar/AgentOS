@@ -229,13 +229,36 @@ graph LR
 
 ---
 
-## Demo Agents
+## User-Created Agents
 
-| Agent ENS | Role | Uniswap Use | KeeperHub Use |
-|---|---|---|---|
-| `trade.agentos.eth` | Trading agent | `/quote` + `/swap` calldata prep | Routes approval + Permit2 + swap execution |
-| `research.agentos.eth` | DeFi research | Receives payment in `preferred_token: USDC` | Executes payment routing |
-| `orchestrate.agentos.eth` | Multi-agent coordinator | Resolves preferred token via ENS, routes via Uniswap | Ensures payment delivery |
+AgentOS does not depend on hard-coded demo agents. A connected user creates their own agent under `agentos.eth`.
+
+Example:
+
+```text
+tradedemo.agentos.eth
+```
+
+When a user deploys an agent, AgentOS creates:
+
+| Layer | What the user gets |
+|---|---|
+| ENS identity | A real `name.agentos.eth` subname |
+| Smart wallet | A user-owned `AgentSmartWallet` controlled by the connected wallet |
+| Capability records | ENS text records such as `specialty`, `fee`, `preferred_token`, `endpoint`, and `reputation` |
+| ERC-8004 identity | Onchain agent identity bound to the smart wallet |
+| Registry record | Discoverable agent record for AgentOS and other agents |
+
+After creation, the user funds the agent wallet with Sepolia USDC/ETH and clicks **Authorize KeeperHub Execution** once. Then the agent can use the OpenAI tool runtime to call the Uniswap Trading API:
+
+```text
+User: Get a quote to swap 1 USDC to WETH
+Agent: calls Uniswap /quote and explains the route
+User: yes
+AgentOS: runs /check_approval if needed, prepares /swap calldata, and routes execution through KeeperHub
+```
+
+The public proof is the Etherscan transaction from the agent wallet. The KeeperHub run ID is kept as the operator audit reference, and the latest execution hash can be written back into ENS text records.
 
 ---
 
