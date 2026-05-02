@@ -138,9 +138,34 @@ export async function executePreparedSwap(params: {
   quoteResponse: Record<string, unknown>;
   signature?: string;
 }) {
+  let permitExecution: unknown = null;
+  const permitTransaction = params.quoteResponse.permitTransaction;
+  if (permitTransaction && typeof permitTransaction === "object") {
+    permitExecution = await submitTransaction({
+      agentEnsName: params.agentEnsName,
+      tx: permitTransaction as Record<string, unknown>,
+      policy: {
+        retries: 3,
+        gasOptimization: true,
+        privateRouting: true,
+        auditTrail: true,
+        purpose: "uniswap-permit-transaction"
+      }
+    });
+  }
+
   const swap = await prepareSwap(params.quoteResponse, params.signature);
-  return submitTransaction({
+  const swapExecution = await submitTransaction({
     agentEnsName: params.agentEnsName,
-    tx: swap.swap || swap
+    tx: swap.swap || swap,
+    policy: {
+      retries: 3,
+      gasOptimization: true,
+      privateRouting: true,
+      auditTrail: true,
+      purpose: "uniswap-swap"
+    }
   });
+
+  return { permitExecution, swapExecution };
 }

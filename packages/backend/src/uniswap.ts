@@ -50,6 +50,7 @@ export async function getQuote(params: {
   }
 
   return uniswapFetch("/quote", {
+    generatePermitAsTransaction: true,
     swapper: params.swapper,
     tokenIn: params.tokenIn,
     tokenOut: params.tokenOut,

@@ -1,4 +1,4 @@
-import { decodeFunctionData, isAddress, isHex, parseAbi } from "viem";
+import { decodeFunctionData, erc20Abi, isAddress, isHex, parseAbi } from "viem";
 import { config } from "./config.js";
 
 type KeeperHubPayload = Record<string, unknown>;
@@ -6,6 +6,10 @@ type KeeperHubPayload = Record<string, unknown>;
 const universalRouterAbi = parseAbi([
   "function execute(bytes commands, bytes[] inputs, uint256 deadline) payable",
   "function execute(bytes commands, bytes[] inputs) payable"
+]);
+
+const permit2Abi = parseAbi([
+  "function approve(address token, address spender, uint160 amount, uint48 expiration)"
 ]);
 
 async function khFetch(path: string, body?: KeeperHubPayload, method = "POST") {
@@ -65,10 +69,7 @@ export async function submitTransaction(params: {
   if (!tx.data || !isHex(tx.data as `0x${string}`)) throw new Error("KeeperHub execution requires hex tx.data");
   const valueWei = normalizeWei(tx.value);
 
-  const decoded = decodeFunctionData({
-    abi: universalRouterAbi,
-    data: tx.data as `0x${string}`
-  });
+  const decoded = decodeKnownTransaction(tx.data as `0x${string}`);
 
   const result = await khFetch("/execute/contract-call", {
     network: networkName(tx.chainId || config.chainId),
@@ -77,7 +78,7 @@ export async function submitTransaction(params: {
     functionArgs: JSON.stringify(decoded.args, (_key, value) =>
       typeof value === "bigint" ? value.toString() : value
     ),
-    abi: JSON.stringify(universalRouterAbi),
+    abi: JSON.stringify(decoded.abi),
     value: valueWei,
     gasLimitMultiplier: "1.25",
     metadata: {
@@ -130,4 +131,16 @@ function normalizeWei(value: string | number | bigint | undefined) {
   if (typeof value === "bigint") return value.toString();
   if (typeof value === "number") return BigInt(value).toString();
   return BigInt(value).toString();
+}
+
+function decodeKnownTransaction(data: `0x${string}`) {
+  for (const abi of [universalRouterAbi, permit2Abi, erc20Abi]) {
+    try {
+      const decoded = decodeFunctionData({ abi, data });
+      return { ...decoded, abi };
+    } catch {
+      // Try the next known ABI.
+    }
+  }
+  throw new Error("KeeperHub execution cannot decode transaction data with known AgentOS ABIs");
 }
