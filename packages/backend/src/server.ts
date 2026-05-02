@@ -4,7 +4,7 @@ import { z } from "zod";
 import { isAddress, type Address } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { config } from "./config.js";
-import { buildAgentRecords, fullAgentName, listSeedAgents, resolveAgent } from "./ens.js";
+import { buildAgentRecords, fullAgentName, resolveAgent } from "./ens.js";
 import { keeperHubHealthCheck, submitTransaction } from "./keeperhub.js";
 import { executePreparedSwap, runAgent } from "./openai-agent.js";
 import { getQuote, prepareSwap } from "./uniswap.js";
@@ -44,12 +44,11 @@ app.get("/health", async (_req, res) => {
   });
 });
 
-app.get("/agents", async (_req, res, next) => {
-  try {
-    res.json({ agents: await listSeedAgents() });
-  } catch (error) {
-    next(error);
-  }
+app.get("/agents", async (_req, res) => {
+  res.json({
+    agents: [],
+    note: "No seeded agents are returned. Create real agents through the wallet-signed dashboard flow, then resolve them by ENS name."
+  });
 });
 
 app.get("/agents/:name", async (req, res, next) => {

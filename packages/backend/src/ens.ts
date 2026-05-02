@@ -76,8 +76,3 @@ export function buildAgentRecords(input: {
     }
   };
 }
-
-export async function listSeedAgents() {
-  const names = ["trade", "research", "orchestrate"].map(fullAgentName);
-  return Promise.all(names.map(resolveAgent));
-}

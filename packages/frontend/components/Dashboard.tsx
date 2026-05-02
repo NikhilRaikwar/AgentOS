@@ -25,47 +25,6 @@ import {
 const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 const parentEnsName = process.env.NEXT_PUBLIC_PARENT_ENS_NAME || "agentos.eth";
 
-const seedAgents = {
-  trade: {
-    specialty: "trading,defi,rebalancing",
-    fee: "0.001 ETH",
-    chains: "[11155111]",
-    endpoint: `${apiUrl}/agents/trade/run`,
-    preferred_token: "USDC",
-    model: "OpenAI",
-    reputation: "78",
-    tasks_done: "6",
-    framework: "agentfi-os/1.0",
-    wallet_type: "user-owned smart wallet"
-  },
-  research: {
-    specialty: "research,analysis,defi-data",
-    fee: "0.001 ETH",
-    chains: "[11155111]",
-    endpoint: `${apiUrl}/agents/research/run`,
-    preferred_token: "USDC",
-    model: "OpenAI",
-    reputation: "91",
-    tasks_done: "12",
-    framework: "agentfi-os/1.0",
-    wallet_type: "user-owned smart wallet"
-  },
-  orchestrate: {
-    specialty: "orchestration,multi-agent,coordination",
-    fee: "0.002 ETH",
-    chains: "[11155111]",
-    endpoint: `${apiUrl}/agents/orchestrate/run`,
-    preferred_token: "ETH",
-    model: "OpenAI",
-    reputation: "65",
-    tasks_done: "4",
-    framework: "agentfi-os/1.0",
-    wallet_type: "user-owned smart wallet"
-  }
-} as const;
-
-type AgentKey = keyof typeof seedAgents;
-
 type Health = {
   chainId: number;
   parentEnsName: string;
@@ -87,6 +46,11 @@ type CreatedAgent = {
   ensName: string;
   smartWallet: Address;
   owner: Address;
+  specialty: string;
+  fee: string;
+  preferredToken: string;
+  endpoint: string;
+  records: Record<string, string>;
   identityTx: Hex;
   factoryTx: Hex;
   registryTx: Hex;
@@ -94,12 +58,6 @@ type CreatedAgent = {
 };
 
 type DashboardPage = "dashboard" | "agents" | "executions" | "ens";
-
-const greetings: Record<AgentKey, string> = {
-  trade: "I can prepare Uniswap quotes, route swaps, and hand execution to KeeperHub while keeping the agent identity under ENS.",
-  research: "I publish DeFi research capabilities through ENS-style records and can be paid through Uniswap-routed settlement.",
-  orchestrate: "I resolve agent capabilities, choose the right agent, and coordinate payments and execution across the system."
-};
 
 const initialSteps: DeployStep[] = [
   { label: "Create user-owned agent smart wallet", status: "idle" },
@@ -132,8 +90,8 @@ export function Dashboard() {
   const { switchChainAsync } = useSwitchChain();
   const [health, setHealth] = useState<Health | null>(null);
   const [healthError, setHealthError] = useState("");
-  const [agent, setAgent] = useState<AgentKey>("trade");
-  const [messages, setMessages] = useState([{ role: "agent", text: greetings.trade }]);
+  const [agent, setAgent] = useState("");
+  const [messages, setMessages] = useState([{ role: "agent", text: "Deploy or select a real ENS-named agent to start the OpenAI + Uniswap + KeeperHub runtime." }]);
   const [input, setInput] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [deployName, setDeployName] = useState("trade");
@@ -145,12 +103,17 @@ export function Dashboard() {
   const [deploySteps, setDeploySteps] = useState(initialSteps);
   const [createdAgents, setCreatedAgents] = useState<CreatedAgent[]>([]);
   const [page, setPage] = useState<DashboardPage>("dashboard");
+  const [storageReady, setStorageReady] = useState(false);
 
-  const selectedRecords = seedAgents[agent];
+  const selectedCreatedAgent = createdAgents.find((item) => item.ensName === agent) || createdAgents[0];
+  const selectedRecords = selectedCreatedAgent?.records || {};
+  const selectedAgentLabel = selectedCreatedAgent
+    ? selectedCreatedAgent.ensName.replace(`.${parentEnsName}`, "")
+    : cleanName(deployName) || "agent";
   const agentName = `${cleanName(deployName) || "agent"}.${parentEnsName}`;
 
   const metrics = useMemo(() => [
-    ["Agent Directory", `${3 + createdAgents.length}`, "seed agents plus wallet-owned deployments"],
+    ["Real Agents", `${createdAgents.length}`, "wallet-owned deployments in this browser"],
     ["ENS Namespace", parentEnsName, "subnames resolve capabilities and wallets"],
     ["Runtime Tools", "3", "ENS discovery, Uniswap quote, KeeperHub execution"],
     ["Owner Wallet", address ? shortAddress(address) : "Connect", "new agents are owned by the connected wallet"]
@@ -166,6 +129,31 @@ export function Dashboard() {
   useEffect(() => {
     if (!isConnected) router.push("/");
   }, [isConnected, router]);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem("agentos.createdAgents");
+    if (!saved) {
+      setStorageReady(true);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(saved) as CreatedAgent[];
+      setCreatedAgents(parsed);
+      if (parsed[0]?.ensName) {
+        setAgent(parsed[0].ensName);
+        setMessages([{ role: "agent", text: `Runtime loaded for ${parsed[0].ensName}. I can resolve ENS records, request Uniswap quotes, and prepare KeeperHub execution.` }]);
+      }
+    } catch {
+      window.localStorage.removeItem("agentos.createdAgents");
+    } finally {
+      setStorageReady(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!storageReady) return;
+    window.localStorage.setItem("agentos.createdAgents", JSON.stringify(createdAgents));
+  }, [createdAgents, storageReady]);
 
   useEffect(() => {
     let cancelled = false;
@@ -188,11 +176,15 @@ export function Dashboard() {
 
   async function sendMessage(text = input) {
     if (!text.trim()) return;
+    if (!selectedCreatedAgent) {
+      setMessages((prev) => [...prev, { role: "agent", text: "Create a real agent first. The runtime is intentionally disabled until there is an ENS subname and smart wallet to operate as." }]);
+      return;
+    }
     setInput("");
     setMessages((prev) => [...prev, { role: "user", text }]);
 
     try {
-      const res = await fetch(`${apiUrl}/agents/${agent}/run`, {
+      const res = await fetch(`${apiUrl}/agents/${selectedAgentLabel}/run`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ message: text, walletAddress: address })
@@ -211,9 +203,9 @@ export function Dashboard() {
     }
   }
 
-  function selectAgent(next: AgentKey) {
-    setAgent(next);
-    setMessages([{ role: "agent", text: greetings[next] }]);
+  function selectAgent(next: CreatedAgent) {
+    setAgent(next.ensName);
+    setMessages([{ role: "agent", text: `I am ${next.ensName}. My ENS records say specialty=${next.specialty}, fee=${next.fee}, preferred token=${next.preferredToken}.` }]);
   }
 
   async function deployAgent() {
@@ -355,15 +347,26 @@ export function Dashboard() {
         detail: "Agent indexed for discovery"
       }));
 
-      setCreatedAgents((prev) => [{
+      const records = Object.fromEntries(textRecords.map((record) => [record.key, record.value]));
+      const createdAgent = {
         ensName,
         smartWallet,
         owner: address,
+        specialty,
+        fee,
+        preferredToken,
+        endpoint,
+        records,
         factoryTx,
         identityTx,
         registryTx,
         ensTx
+      };
+      setCreatedAgents((prev) => [{
+        ...createdAgent
       }, ...prev]);
+      setAgent(ensName);
+      setMessages([{ role: "agent", text: `${ensName} is live. ENS records are written and this runtime can now request quotes and prepare execution for that real agent.` }]);
     } catch (error) {
       setDeployError(error instanceof Error ? error.message : String(error));
       setDeploySteps((steps) => {
@@ -445,14 +448,18 @@ export function Dashboard() {
               <div className="panel-head">
                 <div>
                   <p className="eyebrow">Agent runtime</p>
-                  <h2>Talk to demo agents</h2>
+                  <h2>Talk to your deployed agent</h2>
                 </div>
                 <span className="small-badge">OpenAI tools</span>
               </div>
               <div className="agent-tabs">
-                {(["trade", "research", "orchestrate"] as AgentKey[]).map((key) => (
-                  <button className={`agent-tab ${agent === key ? "active" : ""}`} key={key} onClick={() => selectAgent(key)}>
-                    {key}.{parentEnsName}
+                {createdAgents.length === 0 ? (
+                  <button className="agent-tab active" onClick={() => setModalOpen(true)}>
+                    Create real agent
+                  </button>
+                ) : createdAgents.map((created) => (
+                  <button className={`agent-tab ${selectedCreatedAgent?.ensName === created.ensName ? "active" : ""}`} key={created.registryTx} onClick={() => selectAgent(created)}>
+                    {created.ensName}
                   </button>
                 ))}
               </div>
@@ -460,16 +467,16 @@ export function Dashboard() {
                 {messages.map((msg, idx) => (
                   <div className={`msg ${msg.role}`} key={`${msg.role}-${idx}`}>
                     <div className="msg-bubble">{msg.text}</div>
-                    <div className="msg-meta">{msg.role === "user" ? "you" : `${agent}.${parentEnsName}`} on Sepolia</div>
+                    <div className="msg-meta">{msg.role === "user" ? "you" : selectedCreatedAgent?.ensName || "agentos"} on Sepolia</div>
                   </div>
                 ))}
               </div>
               <div className="suggestions">
                 {[
                   "Get a quote to swap 0.01 ETH to USDC",
-                  "Resolve research.agentos.eth capabilities",
+                  `Resolve ${selectedCreatedAgent?.ensName || "my agent"} capabilities`,
                   "Show KeeperHub execution history",
-                  "Pay research.agentos.eth for a report"
+                  "Prepare payment using preferred_token"
                 ].map((suggestion) => (
                   <button className="suggestion-btn" key={suggestion} onClick={() => sendMessage(suggestion)}>{suggestion}</button>
                 ))}
@@ -482,7 +489,7 @@ export function Dashboard() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-                  placeholder={`Message ${agent}.${parentEnsName}`}
+                  placeholder={selectedCreatedAgent ? `Message ${selectedCreatedAgent.ensName}` : "Create a real agent first"}
                   autoComplete="off"
                 />
                 <button className="send-btn" onClick={() => sendMessage()}>Send</button>
@@ -525,8 +532,8 @@ export function Dashboard() {
                   </div>
                 </div>
                 <div className="empty-state">
-                  <strong>Anyone can discover an agent by ENS name.</strong>
-                  <span>Resolve name.agentos.eth, read its text records, inspect specialty and endpoint, then call or pay that agent using its preferred token.</span>
+                  <strong>Anyone can discover your agent by ENS name.</strong>
+                  <span>Resolve your deployed name.agentos.eth, read its text records, inspect specialty and endpoint, then call or pay that agent using its preferred token.</span>
                 </div>
               </section>
             </div>
@@ -544,17 +551,13 @@ export function Dashboard() {
                 <button className="tiny-btn" onClick={() => setModalOpen(true)}>New</button>
               </div>
               <div className="directory-grid">
-                {(["trade", "research", "orchestrate"] as AgentKey[]).map((key) => (
-                  <article className="agent-directory-card" key={key}>
-                    <div className="agent-ens">{key}.{parentEnsName}</div>
-                    <p>{seedAgents[key].specialty}</p>
-                    <div className="agent-tags">
-                      <span className="tag tag-active">discoverable</span>
-                      <span className="tag tag-res">{seedAgents[key].preferred_token}</span>
-                    </div>
-                    <button className="secondary-inline" onClick={() => { selectAgent(key); setPage("dashboard"); }}>Chat with agent</button>
-                  </article>
-                ))}
+                {createdAgents.length === 0 ? (
+                  <div className="empty-state directory-empty">
+                    <strong>No real agents yet.</strong>
+                    <span>Click Deploy Agent to create the first wallet-owned ENS agent. No seeded demo agents are shown here.</span>
+                    <button className="secondary-inline" onClick={() => setModalOpen(true)}>Deploy Agent</button>
+                  </div>
+                ) : null}
                 {createdAgents.map((created) => (
                   <article className="agent-directory-card" key={created.registryTx}>
                     <div className="agent-ens">{created.ensName}</div>
@@ -562,7 +565,9 @@ export function Dashboard() {
                     <div className="agent-tags">
                       <span className="tag tag-active">user-owned</span>
                       <span className="tag tag-ens">ENS minted</span>
+                      <span className="tag tag-res">{created.preferredToken}</span>
                     </div>
+                    <button className="secondary-inline" onClick={() => { selectAgent(created); setPage("dashboard"); }}>Open runtime</button>
                     <div className="tx-row">
                       {created.ensTx ? <a href={txLink(created.ensTx)} target="_blank" rel="noreferrer">ENS tx</a> : null}
                       <a href={txLink(created.registryTx)} target="_blank" rel="noreferrer">Registry tx</a>
@@ -609,19 +614,21 @@ export function Dashboard() {
                   <h2>Capability text records</h2>
                 </div>
               </div>
-              <select className="select records-select" value={agent} onChange={(e) => setAgent(e.target.value as AgentKey)} aria-label="Select seed agent">
-                <option value="trade">trade.{parentEnsName}</option>
-                <option value="research">research.{parentEnsName}</option>
-                <option value="orchestrate">orchestrate.{parentEnsName}</option>
-              </select>
+              {createdAgents.length > 0 ? (
+                <select className="select records-select" value={selectedCreatedAgent?.ensName || ""} onChange={(e) => setAgent(e.target.value)} aria-label="Select deployed agent">
+                  {createdAgents.map((created) => (
+                    <option value={created.ensName} key={created.registryTx}>{created.ensName}</option>
+                  ))}
+                </select>
+              ) : null}
               <div className="records records-wide">
-                <div className="record-title">{agent}.{parentEnsName}</div>
-                {Object.entries(selectedRecords).map(([key, value]) => (
+                <div className="record-title">{selectedCreatedAgent?.ensName || `No ${parentEnsName} agent deployed yet`}</div>
+                {Object.entries(selectedRecords).length > 0 ? Object.entries(selectedRecords).map(([key, value]) => (
                   <div className="record-row" key={key}>
                     <span className="record-key">{key}</span>
                     <span className="record-val">{value}</span>
                   </div>
-                ))}
+                )) : <div className="empty-state"><strong>No records yet.</strong><span>Deploy an agent to write real ENS text records.</span></div>}
               </div>
               <div className="empty-state">
                 <strong>How the orchestrator chooses agents</strong>
