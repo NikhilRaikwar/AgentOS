@@ -8,7 +8,7 @@ Built for ETHGlobal Open Agents with `agentos.eth` as the agent namespace.
 
 - Deploys ENS-named agents such as `trade.agentos.eth`, `research.agentos.eth`, and `orchestrate.agentos.eth`.
 - Stores agent capabilities, fees, preferred token, model, task count, and reputation in ENS text records.
-- Gives each agent a revocable smart wallet instead of raw per-agent private keys.
+- Gives each agent a revocable smart wallet owned by the connected user wallet, not a server deployer key.
 - Uses OpenAI tool calling for agent reasoning.
 - Uses the Uniswap Trading API for quotes, swaps, and agent-to-agent payments.
 - Uses KeeperHub for workflow execution, retries, gas optimization, and audit trails.
@@ -19,16 +19,17 @@ Built for ETHGlobal Open Agents with `agentos.eth` as the agent namespace.
 ```mermaid
 flowchart TD
   U["User Wallet"] --> F["Next.js Frontend"]
+  F --> FAC["Agent Wallet Factory: createAgentWalletFor(owner)"]
+  F --> R["ERC-8004 Registries"]
+  F --> AR["Agent Registry"]
   F --> B["Express Backend"]
   B --> O["OpenAI Tool Runtime"]
   O --> ENS["ENS Sepolia: agentos.eth subnames + text records"]
   O --> UNI["Uniswap Trading API: quote, swap, order"]
   O --> KH["KeeperHub API/MCP: workflows, execution, audit logs"]
-  B --> C["Agent Smart Wallet Factory"]
-  C --> W["Agent Smart Wallet"]
+  FAC --> W["Agent Smart Wallet"]
   W --> UNI
   KH --> W
-  B --> R["ERC-8004 Registries"]
   R --> ID["Identity Registry"]
   R --> REP["Reputation Registry"]
   R --> VAL["Validation Registry"]
@@ -45,11 +46,11 @@ flowchart TD
 ## Sepolia Deployment
 
 ```text
-ERC8004_IDENTITY_REGISTRY_ADDRESS=0xCDced8F1DdBd05B41Da248857Dc10E1b5e27B4C8
-ERC8004_REPUTATION_REGISTRY_ADDRESS=0x1c7426F56aF77D81759D08A8860735e288AD8B15
-ERC8004_VALIDATION_REGISTRY_ADDRESS=0xeE0EEC3A3cC33B6AF722e0DC649135fF5dD1108B
-AGENT_REGISTRY_ADDRESS=0x6C0Ea9187Cc54Da1b301B0990A89A6cFB6caf6ed
-AGENT_WALLET_FACTORY_ADDRESS=0x1e208080C889415029fC21d85a05159e523a2D4C
+ERC8004_IDENTITY_REGISTRY_ADDRESS=0xB7dd5B72bF248806F63d645a6bDaFfDb053f4300
+ERC8004_REPUTATION_REGISTRY_ADDRESS=0xe7f6b315cA9d49bA1aEcA516311a043542A2d161
+ERC8004_VALIDATION_REGISTRY_ADDRESS=0x3C5E64A4f0fc23C4205AC5a5D281Ecab06Ee57D9
+AGENT_REGISTRY_ADDRESS=0x4180F328e2600E8b846e13A1EFe85D21690C6e55
+AGENT_WALLET_FACTORY_ADDRESS=0x75C553505C7912377E08e4B9b2c824D722a704CB
 ```
 
 Deployment metadata is also stored in [`deployments/sepolia.json`](deployments/sepolia.json).
@@ -73,8 +74,10 @@ Required for the full demo:
 - `KEEPERHUB_API_KEY` with `kh_` organization-key prefix
 - `SEPOLIA_RPC_URL`
 - `NEXT_PUBLIC_WALLETCONNECT_ID`
-- `DEPLOYER_PRIVATE_KEY`
-- `AGENT_EXECUTOR_PRIVATE_KEY`
+- `DEPLOYER_PRIVATE_KEY` only when redeploying contracts
+- `AGENT_EXECUTOR_PRIVATE_KEY` for the backend executor address allowed by agent smart wallets
+
+Normal users do not need to expose private keys to the server. The connected wallet signs agent wallet creation, ERC-8004 identity registration, and AgentFi registry registration directly from the frontend.
 
 Never commit `.env`.
 

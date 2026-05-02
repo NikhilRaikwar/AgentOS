@@ -1,73 +1,171 @@
 "use client";
 
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { useMemo, useState } from "react";
-import { useAccount } from "wagmi";
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import {
+  decodeEventLog,
+  isAddress,
+  namehash,
+  stringToHex,
+  type Address,
+  type Hex
+} from "viem";
+import { sepolia } from "wagmi/chains";
+import { useAccount, usePublicClient, useSwitchChain, useWalletClient } from "wagmi";
+import {
+  agentRegistryAbi,
+  agentWalletFactoryAbi,
+  identityRegistryAbi,
+  sepoliaContracts
+} from "../lib/contracts";
 
 const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+const parentEnsName = process.env.NEXT_PUBLIC_PARENT_ENS_NAME || "agentos.eth";
 
-const ensData = {
+const seedAgents = {
   trade: {
     specialty: "trading,defi,rebalancing",
     fee: "0.001 ETH",
     chains: "[11155111]",
-    endpoint: "https://api.agentfi.io/agents/trade",
+    endpoint: `${apiUrl}/agents/trade/run`,
     preferred_token: "USDC",
     model: "OpenAI",
     reputation: "78",
     tasks_done: "6",
     framework: "agentfi-os/1.0",
-    wallet_type: "smart-wallet"
+    wallet_type: "user-owned smart wallet"
   },
   research: {
     specialty: "research,analysis,defi-data",
     fee: "0.001 ETH",
     chains: "[11155111]",
-    endpoint: "https://api.agentfi.io/agents/research",
+    endpoint: `${apiUrl}/agents/research/run`,
     preferred_token: "USDC",
     model: "OpenAI",
     reputation: "91",
     tasks_done: "12",
     framework: "agentfi-os/1.0",
-    wallet_type: "smart-wallet"
+    wallet_type: "user-owned smart wallet"
   },
   orchestrate: {
     specialty: "orchestration,multi-agent,coordination",
     fee: "0.002 ETH",
     chains: "[11155111]",
-    endpoint: "https://api.agentfi.io/agents/orchestrate",
+    endpoint: `${apiUrl}/agents/orchestrate/run`,
     preferred_token: "ETH",
     model: "OpenAI",
     reputation: "65",
     tasks_done: "4",
     framework: "agentfi-os/1.0",
-    wallet_type: "smart-wallet"
+    wallet_type: "user-owned smart wallet"
   }
 } as const;
 
-type AgentKey = keyof typeof ensData;
+type AgentKey = keyof typeof seedAgents;
 
-const greetings: Record<AgentKey, string> = {
-  trade: "I'm trade.agentos.eth, your onchain trading agent. I can get Uniswap quotes, prepare swaps through KeeperHub, pay other agents, and show execution history.",
-  research: "I'm research.agentos.eth, your DeFi research agent. Other agents discover me through ENS and pay me in USDC via Uniswap routing.",
-  orchestrate: "I'm orchestrate.agentos.eth, the multi-agent orchestrator. I resolve agents via ENS, read their capabilities, hire them, and pay them through Uniswap."
+type Health = {
+  chainId: number;
+  parentEnsName: string;
+  executorAddress: Address | null;
+  openai: boolean;
+  uniswap: boolean;
+  keeperhub: { ok: boolean; status?: number; message?: string };
+  contracts: Record<string, Address>;
 };
 
+type DeployStep = {
+  label: string;
+  status: "idle" | "active" | "done" | "error";
+  hash?: Hex;
+  detail?: string;
+};
+
+type CreatedAgent = {
+  ensName: string;
+  smartWallet: Address;
+  owner: Address;
+  identityTx: Hex;
+  factoryTx: Hex;
+  registryTx: Hex;
+};
+
+const greetings: Record<AgentKey, string> = {
+  trade: "I can prepare Uniswap quotes, route swaps, and hand execution to KeeperHub while keeping the agent identity under ENS.",
+  research: "I publish DeFi research capabilities through ENS-style records and can be paid through Uniswap-routed settlement.",
+  orchestrate: "I resolve agent capabilities, choose the right agent, and coordinate payments and execution across the system."
+};
+
+const initialSteps: DeployStep[] = [
+  { label: "Create user-owned agent smart wallet", status: "idle" },
+  { label: "Mint ERC-8004 identity with wallet binding", status: "idle" },
+  { label: "Register agent in AgentFi registry", status: "idle" }
+];
+
+function txLink(hash?: Hex) {
+  return hash ? `https://sepolia.etherscan.io/tx/${hash}` : "#";
+}
+
+function shortAddress(value?: string | null) {
+  return value ? `${value.slice(0, 6)}...${value.slice(-4)}` : "Not connected";
+}
+
+function cleanName(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 32);
+}
+
+function updateStep(steps: DeployStep[], index: number, patch: Partial<DeployStep>) {
+  return steps.map((step, i) => (i === index ? { ...step, ...patch } : step));
+}
+
 export function Dashboard() {
-  const { address } = useAccount();
+  const { address, isConnected, chainId } = useAccount();
+  const { data: walletClient } = useWalletClient();
+  const publicClient = usePublicClient({ chainId: sepolia.id });
+  const { switchChainAsync } = useSwitchChain();
+  const [health, setHealth] = useState<Health | null>(null);
+  const [healthError, setHealthError] = useState("");
   const [agent, setAgent] = useState<AgentKey>("trade");
   const [messages, setMessages] = useState([{ role: "agent", text: greetings.trade }]);
   const [input, setInput] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
-  const [deployName, setDeployName] = useState("");
-  const records = ensData[agent];
+  const [deployName, setDeployName] = useState("trade");
+  const [specialty, setSpecialty] = useState("trading,defi,rebalancing");
+  const [fee, setFee] = useState("0.001 ETH");
+  const [preferredToken, setPreferredToken] = useState("USDC");
+  const [deployError, setDeployError] = useState("");
+  const [deploying, setDeploying] = useState(false);
+  const [deploySteps, setDeploySteps] = useState(initialSteps);
+  const [createdAgents, setCreatedAgents] = useState<CreatedAgent[]>([]);
+
+  const selectedRecords = seedAgents[agent];
+  const agentName = `${cleanName(deployName) || "agent"}.${parentEnsName}`;
 
   const metrics = useMemo(() => [
-    ["Active Agents", "3", "under agentos.eth"],
-    ["Swaps Executed", "18", "via Uniswap API"],
-    ["KH Executions", "24", "full audit trail"],
-    ["ENS Records", "33", "capabilities + reputation"]
-  ], []);
+    ["Active Agents", String(3 + createdAgents.length), "seed agents plus your deployments"],
+    ["Execution Owner", address ? shortAddress(address) : "Wallet first", "connected wallet owns new agents"],
+    ["KeeperHub", health?.keeperhub?.ok ? "Online" : "Check", "authenticated execution adapter"],
+    ["Contracts", "5", "factory, registry, ERC-8004 set"]
+  ], [address, createdAgents.length, health?.keeperhub?.ok]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadHealth() {
+      try {
+        const res = await fetch(`${apiUrl}/health`);
+        const data = await res.json();
+        if (!cancelled) setHealth(data);
+      } catch (error) {
+        if (!cancelled) setHealthError(error instanceof Error ? error.message : String(error));
+      }
+    }
+    loadHealth();
+    const timer = setInterval(loadHealth, 12000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
 
   async function sendMessage(text = input) {
     if (!text.trim()) return;
@@ -83,7 +181,10 @@ export function Dashboard() {
       const data = await res.json();
       setMessages((prev) => [
         ...prev,
-        { role: "tool", text: data.toolCallsMade?.length ? `Tools: ${data.toolCallsMade.join(", ")}` : "OpenAI agent response" },
+        {
+          role: "tool",
+          text: data.toolCallsMade?.length ? `Tools used: ${data.toolCallsMade.join(", ")}` : "OpenAI tool runtime"
+        },
         { role: "agent", text: data.response || JSON.stringify(data, null, 2) }
       ]);
     } catch (error) {
@@ -96,29 +197,153 @@ export function Dashboard() {
     setMessages([{ role: "agent", text: greetings[next] }]);
   }
 
+  async function deployAgent() {
+    setDeployError("");
+    setDeploySteps(initialSteps);
+
+    if (!address || !isConnected) {
+      setDeployError("Connect a wallet before deploying an agent.");
+      return;
+    }
+    if (!walletClient || !publicClient) {
+      setDeployError("Wallet client is not ready yet. Try again in a moment.");
+      return;
+    }
+    const safeName = cleanName(deployName);
+    if (!safeName) {
+      setDeployError("Enter a lowercase agent name.");
+      return;
+    }
+    if (chainId !== sepolia.id) {
+      await switchChainAsync({ chainId: sepolia.id });
+    }
+
+    const executor = health?.executorAddress && isAddress(health.executorAddress)
+      ? health.executorAddress
+      : address;
+    const ensName = `${safeName}.${parentEnsName}`;
+    const node = namehash(ensName);
+    const endpoint = `${apiUrl}/agents/${safeName}/run`;
+    const agentUri = `agentfi://${ensName}`;
+    const metadata = [
+      { metadataKey: "ensName", metadataValue: stringToHex(ensName) },
+      { metadataKey: "specialty", metadataValue: stringToHex(specialty) },
+      { metadataKey: "fee", metadataValue: stringToHex(fee) },
+      { metadataKey: "preferredToken", metadataValue: stringToHex(preferredToken) },
+      { metadataKey: "endpoint", metadataValue: stringToHex(endpoint) },
+      { metadataKey: "framework", metadataValue: stringToHex("agentfi-os/1.0") },
+      { metadataKey: "ownerModel", metadataValue: stringToHex("connected-wallet") }
+    ];
+
+    setDeploying(true);
+    try {
+      setDeploySteps((steps) => updateStep(steps, 0, { status: "active" }));
+      const factoryTx = await walletClient.writeContract({
+        address: sepoliaContracts.factory,
+        abi: agentWalletFactoryAbi,
+        functionName: "createAgentWalletFor",
+        args: [ensName, node, address, executor]
+      });
+      setDeploySteps((steps) => updateStep(steps, 0, { status: "active", hash: factoryTx }));
+      const factoryReceipt = await publicClient.waitForTransactionReceipt({ hash: factoryTx });
+
+      let smartWallet: Address | null = null;
+      for (const log of factoryReceipt.logs) {
+        if (log.address.toLowerCase() !== sepoliaContracts.factory.toLowerCase()) continue;
+        try {
+          const decoded = decodeEventLog({
+            abi: agentWalletFactoryAbi,
+            data: log.data,
+            topics: log.topics
+          });
+          if (decoded.eventName === "AgentWalletCreated") {
+            smartWallet = decoded.args.wallet;
+            break;
+          }
+        } catch {
+          continue;
+        }
+      }
+      if (!smartWallet) throw new Error("Factory transaction mined, but wallet event was not found.");
+      setDeploySteps((steps) => updateStep(steps, 0, {
+        status: "done",
+        hash: factoryTx,
+        detail: `Wallet ${shortAddress(smartWallet)} owned by ${shortAddress(address)}`
+      }));
+
+      setDeploySteps((steps) => updateStep(steps, 1, { status: "active" }));
+      const identityTx = await walletClient.writeContract({
+        address: sepoliaContracts.identity,
+        abi: identityRegistryAbi,
+        functionName: "registerWithWallet",
+        args: [agentUri, metadata, smartWallet]
+      });
+      setDeploySteps((steps) => updateStep(steps, 1, { status: "active", hash: identityTx }));
+      await publicClient.waitForTransactionReceipt({ hash: identityTx });
+      setDeploySteps((steps) => updateStep(steps, 1, {
+        status: "done",
+        hash: identityTx,
+        detail: "ERC-8004 identity minted to connected wallet"
+      }));
+
+      setDeploySteps((steps) => updateStep(steps, 2, { status: "active" }));
+      const registryTx = await walletClient.writeContract({
+        address: sepoliaContracts.registry,
+        abi: agentRegistryAbi,
+        functionName: "registerAgent",
+        args: [node, ensName, smartWallet, address]
+      });
+      setDeploySteps((steps) => updateStep(steps, 2, { status: "active", hash: registryTx }));
+      await publicClient.waitForTransactionReceipt({ hash: registryTx });
+      setDeploySteps((steps) => updateStep(steps, 2, {
+        status: "done",
+        hash: registryTx,
+        detail: "Agent indexed for discovery"
+      }));
+
+      setCreatedAgents((prev) => [{
+        ensName,
+        smartWallet,
+        owner: address,
+        factoryTx,
+        identityTx,
+        registryTx
+      }, ...prev]);
+    } catch (error) {
+      setDeployError(error instanceof Error ? error.message : String(error));
+      setDeploySteps((steps) => {
+        const active = steps.findIndex((step) => step.status === "active");
+        return active >= 0 ? updateStep(steps, active, { status: "error" }) : steps;
+      });
+    } finally {
+      setDeploying(false);
+    }
+  }
+
   return (
     <div className="app">
       <aside className="sidebar">
         <div className="sidebar-logo">
-          <div className="wordmark">AgentFi<span>OS</span></div>
-          <div className="network-badge">● Sepolia</div>
+          <Link className="wordmark" href="/">Agent<span>OS</span></Link>
+          <div className="network-badge">Sepolia testnet</div>
         </div>
-        <nav className="sidebar-nav">
-          <div className="nav-section-label">Main</div>
-          {["Dashboard", "Agents", "Chat", "Swap", "Deploy Agent", "Executions", "ENS Records"].map((item, idx) => (
+        <nav className="sidebar-nav" aria-label="Dashboard navigation">
+          <div className="nav-section-label">Workspace</div>
+          {["Dashboard", "Agents", "Deploy Agent", "Executions", "ENS Records"].map((item, idx) => (
             <button className={`nav-item ${idx === 0 ? "active" : ""}`} key={item} onClick={() => item === "Deploy Agent" && setModalOpen(true)}>
-              <span className="nav-icon">{["⌘","◎","✦","◐","+","⚙","◇"][idx]}</span>{item}
+              <span className="nav-icon" aria-hidden="true">{["D", "A", "+", "X", "E"][idx]}</span>
+              {item}
             </button>
           ))}
-          <div className="nav-section-label">Docs</div>
-          <a className="nav-item" href="https://docs.keeperhub.com" target="_blank">⚙ KeeperHub</a>
-          <a className="nav-item" href="https://developers.uniswap.org" target="_blank">🦄 Uniswap API</a>
-          <a className="nav-item" href="https://docs.ens.domains" target="_blank">◇ ENS Docs</a>
+          <div className="nav-section-label">Sponsor Docs</div>
+          <a className="nav-item" href="https://docs.keeperhub.com" target="_blank" rel="noreferrer">KeeperHub</a>
+          <a className="nav-item" href="https://developers.uniswap.org" target="_blank" rel="noreferrer">Uniswap API</a>
+          <a className="nav-item" href="https://docs.ens.domains" target="_blank" rel="noreferrer">ENS Docs</a>
         </nav>
         <div className="sidebar-bottom">
           <div className="wallet-pill">
-            <div className="wallet-name">agentos.eth</div>
-            <div className="wallet-addr">{address ? `${address.slice(0, 6)}...${address.slice(-4)}` : "Connect wallet"}</div>
+            <div className="wallet-name">Connected owner</div>
+            <div className="wallet-addr">{shortAddress(address)}</div>
           </div>
         </div>
       </aside>
@@ -126,18 +351,31 @@ export function Dashboard() {
       <main className="main">
         <div className="topbar">
           <div>
-            <h1>Dashboard</h1>
+            <p className="eyebrow">Agent deployment console</p>
+            <h1>User-owned onchain agents</h1>
             <div className="status-row">
-              <span className="status-pill">KeeperHub: Connected</span>
-              <span className="status-pill">Uniswap API: Active</span>
-              <span className="status-pill">OpenAI: Tool runtime</span>
+              <span className="status-pill">{health?.keeperhub?.ok ? "KeeperHub online" : "KeeperHub check pending"}</span>
+              <span className="status-pill">{health?.uniswap ? "Uniswap API configured" : "Uniswap API missing"}</span>
+              <span className="status-pill">{health?.openai ? "OpenAI configured" : "OpenAI missing"}</span>
             </div>
           </div>
-          <div className="status-row">
+          <div className="topbar-actions">
             <ConnectButton />
-            <button className="primary-btn" onClick={() => setModalOpen(true)}>+ Deploy Agent</button>
+            <button className="primary-btn" onClick={() => setModalOpen(true)}>Deploy Agent</button>
           </div>
         </div>
+
+        <section className="hero-panel">
+          <div>
+            <p className="eyebrow">No server wallet custody</p>
+            <h2>New users connect a wallet, deploy an agent wallet, and own it directly.</h2>
+            <p>
+              The frontend calls `createAgentWalletFor(... owner ...)` with the connected wallet as owner.
+              The server only provides AI, Uniswap, and KeeperHub adapters; it does not mint user agents with a deployer key.
+            </p>
+          </div>
+          <button className="secondary-btn" onClick={() => setModalOpen(true)}>Create your first agent</button>
+        </section>
 
         <div className="metrics-row">
           {metrics.map(([label, value, sub]) => (
@@ -151,72 +389,95 @@ export function Dashboard() {
 
         <div className="dashboard-grid">
           <section className="panel">
-            <h2>Agent Chat</h2>
+            <div className="panel-head">
+              <div>
+                <p className="eyebrow">Agent runtime</p>
+                <h2>Talk to demo agents</h2>
+              </div>
+              <span className="small-badge">OpenAI tools</span>
+            </div>
             <div className="agent-tabs">
               {(["trade", "research", "orchestrate"] as AgentKey[]).map((key) => (
                 <button className={`agent-tab ${agent === key ? "active" : ""}`} key={key} onClick={() => selectAgent(key)}>
-                  {key}.agentos.eth
+                  {key}.{parentEnsName}
                 </button>
               ))}
             </div>
-            <div className="chat-messages">
+            <div className="chat-messages" aria-live="polite">
               {messages.map((msg, idx) => (
-                <div className={`msg ${msg.role}`} key={idx}>
+                <div className={`msg ${msg.role}`} key={`${msg.role}-${idx}`}>
                   <div className="msg-bubble">{msg.text}</div>
-                  <div className="msg-meta">{msg.role === "user" ? "you" : `${agent}.agentos.eth`} · Sepolia</div>
+                  <div className="msg-meta">{msg.role === "user" ? "you" : `${agent}.${parentEnsName}`} on Sepolia</div>
                 </div>
               ))}
             </div>
             <div className="suggestions">
               {[
-                "Get me a quote to swap 0.01 ETH to USDC",
-                "Who is research.agentos.eth and what do they charge?",
-                "Show my execution history from KeeperHub",
-                "Pay research.agentos.eth 0.001 ETH for a report"
-              ].map((s) => <button className="suggestion-btn" key={s} onClick={() => sendMessage(s)}>{s}</button>)}
+                "Get a quote to swap 0.01 ETH to USDC",
+                "Resolve research.agentos.eth capabilities",
+                "Show KeeperHub execution history",
+                "Pay research.agentos.eth for a report"
+              ].map((suggestion) => (
+                <button className="suggestion-btn" key={suggestion} onClick={() => sendMessage(suggestion)}>{suggestion}</button>
+              ))}
             </div>
             <div className="chat-input-row">
-              <input className="chat-input" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && sendMessage()} placeholder={`Message ${agent}.agentos.eth...`} />
+              <label className="sr-only" htmlFor="agent-chat-input">Message agent</label>
+              <input
+                id="agent-chat-input"
+                className="chat-input"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+                placeholder={`Message ${agent}.${parentEnsName}`}
+                autoComplete="off"
+              />
               <button className="send-btn" onClick={() => sendMessage()}>Send</button>
             </div>
           </section>
 
-          <div style={{ display: "grid", gap: 18 }}>
+          <div className="right-column">
             <section className="panel">
-              <h2>Live Agents</h2>
-              {(["trade", "research", "orchestrate"] as AgentKey[]).map((key) => (
-                <button className="agent-card" style={{ width: "100%", textAlign: "left" }} key={key} onClick={() => selectAgent(key)}>
-                  <div className="agent-ens">{key}.agentos.eth</div>
-                  <div className="agent-desc">{ensData[key].specialty} · reputation {ensData[key].reputation}/100 · {ensData[key].wallet_type}</div>
-                </button>
-              ))}
-            </section>
-
-            <section className="panel">
-              <h2>Execution Feed</h2>
-              {[
-                ["KeeperHub executed swap", "0 retries · MEV-protected", "hi-kh"],
-                ["Uniswap quote prepared", "ETH → USDC · BEST_PRICE", "hi-uni"],
-                ["ENS reputation updated", `${agent}.agentos.eth`, "hi-ens"],
-                ["Orchestrator resolved research.agentos.eth", "ENS text records", "hi-ens"]
-              ].map(([title, meta, cls]) => (
-                <div className="activity" key={title}>
-                  <div className="act-title"><span className={cls}>{title}</span></div>
-                  <div className="act-meta"><span>{meta}</span><span>Sepolia</span></div>
+              <div className="panel-head">
+                <div>
+                  <p className="eyebrow">Real deployment</p>
+                  <h2>Your agents</h2>
                 </div>
+                <button className="tiny-btn" onClick={() => setModalOpen(true)}>New</button>
+              </div>
+              {createdAgents.length === 0 ? (
+                <div className="empty-state">
+                  <strong>No user agents yet.</strong>
+                  <span>Deploy one with your connected wallet to create a smart wallet, ERC-8004 identity, and registry record.</span>
+                </div>
+              ) : createdAgents.map((created) => (
+                <article className="agent-card" key={created.registryTx}>
+                  <div className="agent-ens">{created.ensName}</div>
+                  <div className="agent-desc">Wallet {shortAddress(created.smartWallet)} owned by {shortAddress(created.owner)}</div>
+                  <div className="tx-row">
+                    <a href={txLink(created.factoryTx)} target="_blank" rel="noreferrer">Factory tx</a>
+                    <a href={txLink(created.identityTx)} target="_blank" rel="noreferrer">Identity tx</a>
+                    <a href={txLink(created.registryTx)} target="_blank" rel="noreferrer">Registry tx</a>
+                  </div>
+                </article>
               ))}
             </section>
 
             <section className="panel">
-              <h2>ENS Text Records</h2>
-              <select className="select" value={agent} onChange={(e) => setAgent(e.target.value as AgentKey)}>
-                <option value="trade">trade.agentos.eth</option>
-                <option value="research">research.agentos.eth</option>
-                <option value="orchestrate">orchestrate.agentos.eth</option>
+              <div className="panel-head">
+                <div>
+                  <p className="eyebrow">Discovery metadata</p>
+                  <h2>Agent records</h2>
+                </div>
+              </div>
+              <select className="select" value={agent} onChange={(e) => setAgent(e.target.value as AgentKey)} aria-label="Select seed agent">
+                <option value="trade">trade.{parentEnsName}</option>
+                <option value="research">research.{parentEnsName}</option>
+                <option value="orchestrate">orchestrate.{parentEnsName}</option>
               </select>
               <div className="records">
-                <div style={{ color: "var(--accent2)", marginBottom: 12, fontWeight: 700 }}>{agent}.agentos.eth</div>
-                {Object.entries(records).map(([key, value]) => (
+                <div className="record-title">{agent}.{parentEnsName}</div>
+                {Object.entries(selectedRecords).map(([key, value]) => (
                   <div className="record-row" key={key}>
                     <span className="record-key">{key}</span>
                     <span className="record-val">{value}</span>
@@ -224,26 +485,91 @@ export function Dashboard() {
                 ))}
               </div>
             </section>
+
+            <section className="panel">
+              <div className="panel-head">
+                <div>
+                  <p className="eyebrow">System health</p>
+                  <h2>Execution stack</h2>
+                </div>
+              </div>
+              {healthError ? <div className="error-box">{healthError}</div> : null}
+              <div className="activity">
+                <div className="act-title">KeeperHub</div>
+                <div className="act-meta"><span>{health?.keeperhub?.ok ? "Authenticated" : health?.keeperhub?.message || "Checking"}</span></div>
+              </div>
+              <div className="activity">
+                <div className="act-title">Executor address</div>
+                <div className="act-meta"><span>{shortAddress(health?.executorAddress)}</span></div>
+              </div>
+              <div className="activity">
+                <div className="act-title">Factory</div>
+                <div className="act-meta"><span>{shortAddress(sepoliaContracts.factory)}</span></div>
+              </div>
+            </section>
           </div>
         </div>
       </main>
 
-      <div className={`modal-backdrop ${modalOpen ? "open" : ""}`} onClick={(e) => e.currentTarget === e.target && setModalOpen(false)}>
-        <div className="modal">
-          <div className="modal-head"><h2>Deploy Agent</h2></div>
+      <div className={`modal-backdrop ${modalOpen ? "open" : ""}`} onClick={(e) => e.currentTarget === e.target && !deploying && setModalOpen(false)}>
+        <div className="modal" role="dialog" aria-modal="true" aria-labelledby="deploy-title">
+          <div className="modal-head">
+            <div>
+              <p className="eyebrow">Wallet-signed deployment</p>
+              <h2 id="deploy-title">Create Agent</h2>
+            </div>
+            <button className="icon-btn" onClick={() => setModalOpen(false)} disabled={deploying} aria-label="Close deploy dialog">x</button>
+          </div>
           <div className="modal-body">
-            <label>Agent Name</label>
-            <input className="field" value={deployName} onChange={(e) => setDeployName(e.target.value)} placeholder="alpha" />
-            <div className="ens-preview">ENS Name: <strong style={{ color: "var(--accent2)" }}>{deployName || "__"}.agentos.eth</strong></div>
-            <label>Specialty</label>
-            <input className="field" defaultValue="trading,defi" />
-            <label>Preferred Payment Token</label>
-            <select className="select" defaultValue="USDC"><option>USDC</option><option>ETH</option></select>
-            <p style={{ color: "var(--muted)", fontSize: 12 }}>Deploys a smart wallet, links ENS, writes capability records, connects Uniswap, and registers KeeperHub execution policy.</p>
+            <div className="form-grid">
+              <label>
+                <span>Agent name</span>
+                <input className="field" value={deployName} onChange={(e) => setDeployName(cleanName(e.target.value))} placeholder="trade" autoComplete="off" />
+              </label>
+              <label>
+                <span>Preferred token</span>
+                <select className="select" value={preferredToken} onChange={(e) => setPreferredToken(e.target.value)}>
+                  <option>USDC</option>
+                  <option>ETH</option>
+                  <option>WETH</option>
+                </select>
+              </label>
+            </div>
+            <label>
+              <span>Specialty</span>
+              <input className="field" value={specialty} onChange={(e) => setSpecialty(e.target.value)} placeholder="trading,defi,rebalancing" autoComplete="off" />
+            </label>
+            <label>
+              <span>Fee</span>
+              <input className="field" value={fee} onChange={(e) => setFee(e.target.value)} placeholder="0.001 ETH" autoComplete="off" />
+            </label>
+            <div className="ens-preview">
+              <span>Agent name</span>
+              <strong>{agentName}</strong>
+            </div>
+            <div className="owner-preview">
+              <span>Smart wallet owner</span>
+              <strong>{shortAddress(address)}</strong>
+            </div>
+            <div className="deploy-steps">
+              {deploySteps.map((step) => (
+                <div className={`deploy-step ${step.status}`} key={step.label}>
+                  <span className="step-dot" />
+                  <div>
+                    <strong>{step.label}</strong>
+                    {step.detail ? <small>{step.detail}</small> : null}
+                    {step.hash ? <a href={txLink(step.hash)} target="_blank" rel="noreferrer">View transaction</a> : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {deployError ? <div className="error-box">{deployError}</div> : null}
           </div>
           <div className="modal-footer">
-            <button className="btn-cancel" onClick={() => setModalOpen(false)}>Cancel</button>
-            <button className="btn-deploy" onClick={() => setModalOpen(false)}>Deploy on Sepolia →</button>
+            <button className="btn-cancel" onClick={() => setModalOpen(false)} disabled={deploying}>Cancel</button>
+            <button className="btn-deploy" onClick={deployAgent} disabled={deploying || !isConnected}>
+              {deploying ? "Deploying..." : isConnected ? "Sign and deploy" : "Connect wallet first"}
+            </button>
           </div>
         </div>
       </div>

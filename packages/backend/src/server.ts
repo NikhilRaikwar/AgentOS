@@ -2,6 +2,7 @@ import cors from "cors";
 import express from "express";
 import { z } from "zod";
 import { isAddress, type Address } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { config } from "./config.js";
 import { buildAgentRecords, fullAgentName, listSeedAgents, resolveAgent } from "./ens.js";
 import { keeperHubHealthCheck, submitTransaction } from "./keeperhub.js";
@@ -11,6 +12,16 @@ import { getQuote, prepareSwap } from "./uniswap.js";
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
+
+function getExecutorAddress() {
+  try {
+    return config.agentExecutorPrivateKey
+      ? privateKeyToAccount(config.agentExecutorPrivateKey as `0x${string}`).address
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 app.get("/health", async (_req, res) => {
   const keeperhub = await keeperHubHealthCheck();
@@ -25,6 +36,7 @@ app.get("/health", async (_req, res) => {
       agentRegistry: config.agentRegistryAddress,
       agentWalletFactory: config.agentWalletFactoryAddress
     },
+    executorAddress: getExecutorAddress(),
     openai: Boolean(config.openAiApiKey),
     uniswap: Boolean(config.uniswapApiKey),
     keeperhub

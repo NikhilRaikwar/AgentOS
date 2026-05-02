@@ -1,6 +1,12 @@
+import { decodeFunctionData, isAddress, isHex, parseAbi } from "viem";
 import { config } from "./config.js";
 
 type KeeperHubPayload = Record<string, unknown>;
+
+const universalRouterAbi = parseAbi([
+  "function execute(bytes commands, bytes[] inputs, uint256 deadline) payable",
+  "function execute(bytes commands, bytes[] inputs) payable"
+]);
 
 async function khFetch(path: string, body?: KeeperHubPayload, method = "POST") {
   if (!config.keeperHubApiKey) {
@@ -54,14 +60,34 @@ export async function submitTransaction(params: {
   tx: KeeperHubPayload;
   policy?: KeeperHubPayload;
 }) {
-  const result = await khFetch("/executions", {
-    agent: params.agentEnsName,
-    transaction: params.tx,
-    policy: params.policy || {
-      retries: 3,
-      gasOptimization: true,
-      privateRouting: true,
-      auditTrail: true
+  const tx = params.tx as { to?: string; data?: string; value?: string | number | bigint; chainId?: number };
+  if (!tx.to || !isAddress(tx.to)) throw new Error("KeeperHub execution requires tx.to");
+  if (!tx.data || !isHex(tx.data as `0x${string}`)) throw new Error("KeeperHub execution requires hex tx.data");
+
+  const decoded = decodeFunctionData({
+    abi: universalRouterAbi,
+    data: tx.data as `0x${string}`
+  });
+
+  const result = await khFetch("/execute/contract-call", {
+    network: networkName(tx.chainId || config.chainId),
+    contractAddress: tx.to,
+    functionName: decoded.functionName,
+    functionArgs: JSON.stringify(decoded.args, (_key, value) =>
+      typeof value === "bigint" ? value.toString() : value
+    ),
+    abi: JSON.stringify(universalRouterAbi),
+    value: String(tx.value || "0"),
+    gasLimitMultiplier: "1.25",
+    metadata: {
+      agent: params.agentEnsName,
+      source: "agentos-uniswap-swap",
+      policy: params.policy || {
+        retries: 3,
+        gasOptimization: true,
+        privateRouting: true,
+        auditTrail: true
+      }
     }
   });
 
@@ -78,6 +104,22 @@ export async function submitTransaction(params: {
 }
 
 export async function getAgentExecutionHistory(agentEnsName: string) {
-  const encoded = encodeURIComponent(agentEnsName);
-  return khFetch(`/executions?agent=${encoded}`, undefined, "GET");
+  return {
+    agentEnsName,
+    note: "KeeperHub Direct Execution exposes status by executionId. Run a transaction first, then query /execute/{executionId}/status."
+  };
+}
+
+function networkName(chainId: number) {
+  const networks: Record<number, string> = {
+    1: "ethereum",
+    11155111: "sepolia",
+    8453: "base",
+    84532: "base-sepolia",
+    42161: "arbitrum",
+    137: "polygon",
+    130: "unichain",
+    1301: "unichain-sepolia"
+  };
+  return networks[chainId] || "sepolia";
 }

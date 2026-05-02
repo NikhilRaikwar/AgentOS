@@ -17,10 +17,25 @@ contract AgentWalletFactory {
         external
         returns (address wallet)
     {
+        wallet = _createAgentWallet(ensName, node, msg.sender, executor);
+    }
+
+    function createAgentWalletFor(string calldata ensName, bytes32 node, address owner, address executor)
+        external
+        returns (address wallet)
+    {
+        wallet = _createAgentWallet(ensName, node, owner, executor);
+    }
+
+    function _createAgentWallet(string calldata ensName, bytes32 node, address owner, address executor)
+        internal
+        returns (address wallet)
+    {
+        require(owner != address(0), "OWNER_ZERO");
         require(walletByNode[node] == address(0), "AGENT_EXISTS");
-        AgentSmartWallet created = new AgentSmartWallet(msg.sender, executor, ensName);
+        AgentSmartWallet created = new AgentSmartWallet(owner, executor, ensName);
         wallet = address(created);
         walletByNode[node] = wallet;
-        emit AgentWalletCreated(ensName, msg.sender, wallet, executor);
+        emit AgentWalletCreated(ensName, owner, wallet, executor);
     }
 }

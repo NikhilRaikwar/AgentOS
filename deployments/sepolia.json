@@ -3,10 +3,10 @@
   "chainId": 11155111,
   "parentEnsName": "agentos.eth",
   "contracts": {
-    "erc8004IdentityRegistry": "0xCDced8F1DdBd05B41Da248857Dc10E1b5e27B4C8",
-    "erc8004ReputationRegistry": "0x1c7426F56aF77D81759D08A8860735e288AD8B15",
-    "erc8004ValidationRegistry": "0xeE0EEC3A3cC33B6AF722e0DC649135fF5dD1108B",
-    "agentRegistry": "0x6C0Ea9187Cc54Da1b301B0990A89A6cFB6caf6ed",
-    "agentWalletFactory": "0x1e208080C889415029fC21d85a05159e523a2D4C"
+    "erc8004IdentityRegistry": "0xB7dd5B72bF248806F63d645a6bDaFfDb053f4300",
+    "erc8004ReputationRegistry": "0xe7f6b315cA9d49bA1aEcA516311a043542A2d161",
+    "erc8004ValidationRegistry": "0x3C5E64A4f0fc23C4205AC5a5D281Ecab06Ee57D9",
+    "agentRegistry": "0x4180F328e2600E8b846e13A1EFe85D21690C6e55",
+    "agentWalletFactory": "0x75C553505C7912377E08e4B9b2c824D722a704CB"
   }
 }

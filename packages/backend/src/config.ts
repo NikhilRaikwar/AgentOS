@@ -16,6 +16,7 @@ export const config = {
   keeperHubApiKey: process.env.KEEPERHUB_API_KEY || "",
   openAiApiKey: process.env.OPENAI_API_KEY || "",
   openAiModel: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+  agentExecutorPrivateKey: process.env.AGENT_EXECUTOR_PRIVATE_KEY || "",
   erc8004IdentityRegistryAddress: process.env.ERC8004_IDENTITY_REGISTRY_ADDRESS || "",
   erc8004ReputationRegistryAddress: process.env.ERC8004_REPUTATION_REGISTRY_ADDRESS || "",
   erc8004ValidationRegistryAddress: process.env.ERC8004_VALIDATION_REGISTRY_ADDRESS || "",

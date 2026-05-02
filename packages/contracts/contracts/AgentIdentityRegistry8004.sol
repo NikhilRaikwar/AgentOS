@@ -56,6 +56,34 @@ contract AgentIdentityRegistry8004 is ERC721URIStorage, EIP712 {
         agentId = _register("");
     }
 
+    function registerWithWallet(string calldata agentURI, MetadataEntry[] calldata metadata, address wallet)
+        external
+        returns (uint256 agentId)
+    {
+        require(wallet != address(0), "WALLET_ZERO");
+        agentId = nextAgentId++;
+        _safeMint(msg.sender, agentId);
+        if (bytes(agentURI).length > 0) _setTokenURI(agentId, agentURI);
+        agentWalletById[agentId] = wallet;
+        emit Registered(agentId, agentURI, msg.sender);
+        emit AgentWalletSet(agentId, wallet);
+        emit MetadataSet(agentId, "agentWallet", "agentWallet", abi.encode(wallet));
+        for (uint256 i = 0; i < metadata.length; i++) {
+            _setMetadata(agentId, metadata[i].metadataKey, metadata[i].metadataValue);
+        }
+    }
+
+    function registerFor(address owner, string calldata agentURI, MetadataEntry[] calldata metadata)
+        external
+        returns (uint256 agentId)
+    {
+        require(owner != address(0), "OWNER_ZERO");
+        agentId = _registerFor(owner, agentURI);
+        for (uint256 i = 0; i < metadata.length; i++) {
+            _setMetadata(agentId, metadata[i].metadataKey, metadata[i].metadataValue);
+        }
+    }
+
     function setAgentURI(uint256 agentId, string calldata newURI) external {
         require(_isAuthorized(ownerOf(agentId), msg.sender, agentId), "NOT_AUTHORIZED");
         _setTokenURI(agentId, newURI);
@@ -104,12 +132,16 @@ contract AgentIdentityRegistry8004 is ERC721URIStorage, EIP712 {
     }
 
     function _register(string memory agentURI) private returns (uint256 agentId) {
+        agentId = _registerFor(msg.sender, agentURI);
+    }
+
+    function _registerFor(address owner, string memory agentURI) private returns (uint256 agentId) {
         agentId = nextAgentId++;
-        _safeMint(msg.sender, agentId);
+        _safeMint(owner, agentId);
         if (bytes(agentURI).length > 0) _setTokenURI(agentId, agentURI);
-        agentWalletById[agentId] = msg.sender;
-        emit Registered(agentId, agentURI, msg.sender);
-        emit MetadataSet(agentId, "agentWallet", "agentWallet", abi.encode(msg.sender));
+        agentWalletById[agentId] = owner;
+        emit Registered(agentId, agentURI, owner);
+        emit MetadataSet(agentId, "agentWallet", "agentWallet", abi.encode(owner));
     }
 
     function _setMetadata(uint256 agentId, string memory metadataKey, bytes memory metadataValue) private {
