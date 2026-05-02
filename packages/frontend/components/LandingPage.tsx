@@ -2,115 +2,255 @@
 
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import Link from "next/link";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { useAccount } from "wagmi";
 
 const stack = [
-  ["ENS", "Persistent agent names, capability metadata, reputation, and decentralized discovery.", "identity"],
-  ["Uniswap", "Trading API quotes, swaps, UniswapX-ready settlement, and any-token agent payments.", "execution"],
-  ["KeeperHub", "Retries, gas optimization, private routing, and audit trails for agent transactions.", "reliability"],
-  ["OpenAI", "Tool-calling runtime that can reason over ENS records and prepare Uniswap actions.", "agent runtime"]
-];
-
-const flow = [
-  ["Connect", "A new user connects a Sepolia wallet. No server custody is required."],
-  ["Create", "The wallet signs factory deployment for a user-owned agent smart wallet."],
-  ["Register", "The wallet mints ERC-8004 identity and indexes the agent under agentos.eth."],
-  ["Execute", "Agents quote with Uniswap and route reliable settlement through KeeperHub."]
+  {
+    name: "ENS",
+    role: "Identity, Discovery, Reputation",
+    accent: "acc-green",
+    desc: "ENS Sepolia subnames under agentos.eth give agents persistent human-readable identities. Text records store machine-readable capability manifests.",
+    features: [
+      "Real subnames via AgentSubnameRegistrar",
+      "Text records: specialty, fee, endpoint, reputation",
+      "ERC-8004 identity NFT bound to smart wallet",
+      "Discoverable through ENS, not a central database"
+    ]
+  },
+  {
+    name: "Uniswap",
+    role: "Quotes, Swaps, Settlement",
+    accent: "acc-pink",
+    desc: "The Uniswap Trading API powers agent financial operations. Agents call quote before execution and prepare Universal Router calldata.",
+    features: [
+      "Trading API quote and swap preparation",
+      "UniswapX-ready order path",
+      "Agent-to-agent payments in preferred token",
+      "Routing transparency before execution"
+    ]
+  },
+  {
+    name: "KeeperHub",
+    role: "Execution, Retries, Audit Trails",
+    accent: "acc-gold",
+    desc: "KeeperHub is the reliability layer. Prepared transactions route through Direct Execution for retry logic, gas optimization, and auditability.",
+    features: [
+      "Direct Execution via contract-call",
+      "Retry and gas bump policy",
+      "Private routing for safer settlement",
+      "Per-execution audit trail"
+    ]
+  },
+  {
+    name: "ERC-8004",
+    role: "Onchain Agent Standard",
+    accent: "acc-blue",
+    desc: "Identity, reputation, and validation registries give agents trust primitives beyond chat or wallet automation.",
+    features: [
+      "ERC-721 identity registry",
+      "Feedback and reputation registry",
+      "Validation registry for third-party attestations",
+      "Sepolia deployed contracts"
+    ]
+  },
+  {
+    name: "OpenAI",
+    role: "Agent Reasoning, Tool Calling",
+    accent: "acc-ink",
+    desc: "The backend runtime uses OpenAI tool calls to resolve agents, fetch Uniswap quotes, and inspect KeeperHub status.",
+    features: [
+      "Tool-calling agent loop",
+      "ENS discovery tool",
+      "Uniswap quote tool",
+      "KeeperHub history tool"
+    ]
+  },
+  {
+    name: "Infra",
+    role: "Deployment, Wallet Security",
+    accent: "acc-faint",
+    desc: "The connected wallet signs deployments. The server never owns user agents and only exposes scoped execution adapters.",
+    features: [
+      "No server custody",
+      "User-owned smart wallets",
+      "Scoped executor address",
+      "Full build verification"
+    ]
+  }
 ];
 
 export function LandingPage() {
   const { isConnected } = useAccount();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (isConnected) router.push("/dashboard");
+  }, [isConnected, router]);
 
   return (
     <>
       <nav className="landing-nav">
-        <Link className="logo" href="/">Agent<span>OS</span></Link>
-        <div className="nav-links">
-          <a href="#flow">Flow</a>
+        <Link className="nav-logo" href="/">Agent<em>OS</em></Link>
+        <div className="nav-right">
+          <a href="#how">How it works</a>
           <a href="#stack">Stack</a>
-          <a href="#demo">Demo</a>
-          <Link href="/dashboard" className="nav-cta">Dashboard</Link>
+          <a href="#prizes">Prizes</a>
+          <ConnectButton.Custom>
+            {({ account, chain, openAccountModal, openChainModal, openConnectModal, mounted }) => {
+              const ready = mounted;
+              const connected = ready && account && chain;
+              if (!connected) return <button className="nav-cta" onClick={openConnectModal}>Connect Wallet</button>;
+              if (chain.unsupported) return <button className="nav-cta" onClick={openChainModal}>Wrong Network</button>;
+              return <button className="nav-cta" onClick={openAccountModal}>{account.displayName}</button>;
+            }}
+          </ConnectButton.Custom>
         </div>
       </nav>
 
       <main>
         <section className="hero">
-          <div className="badge">ETHGlobal Open Agents 2026</div>
-          <h1>
-            Launch named AI agents<br />
-            that can pay, trade, and prove trust.
-          </h1>
-          <p className="subtitle">
-            AgentOS is a deployment layer for onchain agents: ENS gives each agent identity,
-            Uniswap gives it financial execution, and KeeperHub makes the final transaction reliable.
-          </p>
-          <div className="landing-wallet">
-            <ConnectButton />
-            <Link className="primary-btn" href="/dashboard">
-              {isConnected ? "Open Dashboard" : "Preview Dashboard"}
-            </Link>
+          <div className="hero-left">
+            <div className="issue-line fade-up d1">
+              <span className="issue-badge"><span className="issue-dot" />Live on Sepolia</span>
+              <span>ETHGlobal Open Agents 2026</span>
+            </div>
+
+            <h1 className="fade-up d2">
+              <span className="overline">AgentOS - The Onchain Agent Layer</span>
+              The <em>operating system</em><br />for AI agents that<br />own, pay and prove.
+            </h1>
+
+            <p className="hero-desc fade-up d3">
+              ENS gives every agent a human-readable identity and reputation.
+              Uniswap gives them financial rails. KeeperHub helps final transactions land.
+              No server custody. No raw-address agent discovery.
+            </p>
+
+            <div className="hero-actions fade-up d4">
+              <ConnectButton.Custom>
+                {({ account, chain, openAccountModal, openChainModal, openConnectModal, mounted }) => {
+                  const ready = mounted;
+                  const connected = ready && account && chain;
+                  if (!connected) return <button className="btn-primary" onClick={openConnectModal}>Connect Wallet</button>;
+                  if (chain.unsupported) return <button className="btn-primary" onClick={openChainModal}>Switch Network</button>;
+                  return <button className="btn-primary" onClick={openAccountModal}>Connected: {account.displayName}</button>;
+                }}
+              </ConnectButton.Custom>
+              <a href="#how" className="btn-outline">See how it works</a>
+            </div>
+
+            <div className="sponsor-row fade-up d5">
+              <span className="sponsor-label">Powered by</span>
+              <span className="sponsor-pill">ENS Sepolia</span>
+              <span className="sponsor-pill">Uniswap API</span>
+              <span className="sponsor-pill">KeeperHub</span>
+              <span className="sponsor-pill">ERC-8004</span>
+            </div>
           </div>
 
-          <div className="product-shell" id="demo">
-            <div className="product-top">
-              <span>agentos.eth deployment console</span>
-              <span>Sepolia</span>
+          <div className="hero-card fade-up d3">
+            <div className="card-header">
+              <div className="card-header-dots"><div className="hdot" /><div className="hdot" /><div className="hdot" /></div>
+              <span className="card-title">agentos - runtime</span>
             </div>
-            <div className="product-grid">
-              <div className="product-panel">
-                <p className="eyebrow">New agent</p>
-                <h2>trade.agentos.eth</h2>
-                <div className="product-row"><span>Owner</span><strong>Connected wallet</strong></div>
-                <div className="product-row"><span>Wallet</span><strong>Factory deployed</strong></div>
-                <div className="product-row"><span>Identity</span><strong>ERC-8004 minted</strong></div>
-                <div className="product-row"><span>Execution</span><strong>KeeperHub ready</strong></div>
-              </div>
-              <div className="product-panel accent-panel">
-                <p className="eyebrow">Agent command</p>
-                <div className="command-card">Quote 0.01 ETH to USDC, validate route, and prepare reliable execution.</div>
-                <div className="route-line"><span>ENS</span><i /> <span>OpenAI</span><i /> <span>Uniswap</span><i /> <span>KeeperHub</span></div>
-              </div>
+            <div className="card-body">
+              <div className="term-line"><span className="prompt">$ </span><span className="cmd">agentos deploy trade.agentos.eth</span></div>
+              <div className="term-line out t-dim">- Calling AgentWalletFactory...</div>
+              <div className="term-line out"><span className="t-green">ok</span> Smart wallet deployed - owner: connected wallet</div>
+              <div className="term-line out t-dim">- Minting ENS subname...</div>
+              <div className="term-line out"><span className="t-green">ok</span> <span className="t-green">trade.agentos.eth</span> to smart wallet</div>
+              <div className="term-line out t-dim">- Writing text records...</div>
+              <div className="term-line out"><span className="t-green">ok</span> specialty=trading,defi fee=0.001ETH</div>
+              <div className="term-line out t-dim">- Minting ERC-8004 identity...</div>
+              <div className="term-line out"><span className="t-green">ok</span> identity NFT to connected wallet</div>
+              <hr className="divider-line" />
+              <div className="term-line"><span className="prompt">$ </span><span className="cmd">quote 0.01 ETH to USDC</span></div>
+              <div className="term-line out t-dim">- Calling Uniswap quote...</div>
+              <div className="term-line out"><span className="t-pink">route</span> best price prepared</div>
+              <div className="term-line out t-dim">- Routing via KeeperHub...</div>
+              <div className="term-line out"><span className="t-gold">exec</span> Direct Execution ready</div>
             </div>
           </div>
         </section>
 
-        <section id="flow" className="section">
-          <div className="section-inner">
-            <div className="section-label">User flow</div>
-            <h2 className="section-title">A real new user can create an agent without giving us a private key.</h2>
-            <div className="steps">
-              {flow.map(([title, text], index) => (
-                <article className="step-card" key={title}>
-                  <div className="step-num">{String(index + 1).padStart(2, "0")}</div>
-                  <h3>{title}</h3>
-                  <p>{text}</p>
-                </article>
-              ))}
-            </div>
+        <hr className="section-rule" />
+
+        <section className="section" id="how">
+          <span className="kicker">User flow</span>
+          <h2 className="section-title">From wallet to<br /><em>working onchain agent</em><br />in four steps.</h2>
+          <p className="section-desc">No server holds the user private key. No centralized agent registry. The connected wallet signs every deployment step directly.</p>
+          <div className="steps-grid">
+            {[
+              ["01", "Connect Wallet", "A new user connects a Sepolia wallet. The connected wallet becomes the owner of the new agent.", "User-signed", "tag-ai"],
+              ["02", "Deploy Agent Wallet", "The wallet signs createAgentWalletFor on the AgentWalletFactory. The smart wallet is owned by the user.", "ENS-linked", "tag-ens"],
+              ["03", "Register Identity", "The wallet mints a real agentos.eth subname, writes text records, and mints ERC-8004 identity.", "ENS + ERC-8004", "tag-ens"],
+              ["04", "Execute and Settle", "Agents reason with OpenAI tools, quote via Uniswap, and route final execution through KeeperHub.", "Uniswap + KeeperHub", "tag-uni"]
+            ].map(([num, title, desc, tag, cls]) => (
+              <div className="step" key={title}>
+                <div className="step-num">{num}</div>
+                <h3 className="step-title">{title}</h3>
+                <p className="step-desc">{desc}</p>
+                <span className={`step-tag ${cls}`}>{tag}</span>
+              </div>
+            ))}
           </div>
         </section>
 
-        <section id="stack" className="section">
-          <div className="section-inner">
-            <div className="section-label">Sponsor stack</div>
-            <h2 className="section-title">Every integration is part of the product surface.</h2>
+        <div className="section-full" id="stack">
+          <div className="section-full-inner">
+            <span className="kicker">Sponsor stack</span>
+            <h2 className="section-title">Every integration<br />does <em>real work.</em></h2>
+            <p className="section-desc">No cosmetic add-ons. Each sponsor API is a load-bearing layer of the architecture.</p>
             <div className="stack-grid">
-              {stack.map(([name, desc, tag]) => (
-                <article className="card" key={name}>
-                  <h3>{name}</h3>
-                  <p>{desc}</p>
-                  <span className="card-feat">{tag}</span>
-                </article>
+              {stack.map((item) => (
+                <div className="stack-card" key={item.name}>
+                  <div className={`stack-accent ${item.accent}`} />
+                  <div className="stack-logo">{item.name}</div>
+                  <div className="stack-role">{item.role}</div>
+                  <p className="stack-desc">{item.desc}</p>
+                  <ul className="stack-features">
+                    {item.features.map((feature) => <li key={feature}>{feature}</li>)}
+                  </ul>
+                </div>
               ))}
             </div>
+          </div>
+        </div>
+
+        <section className="section" id="prizes">
+          <span className="kicker">ETHGlobal Open Agents</span>
+          <h2 className="section-title">Built to win<br /><em>multiple tracks.</em></h2>
+          <p className="section-desc">ENS, Uniswap, and KeeperHub are integrated deeply enough to qualify independently.</p>
+          <div className="prize-grid">
+            {[
+              ["Uniswap Foundation", "$5,000", "Best API Integration", "Quote, swap preparation, agentic payments, and FEEDBACK.md.", "pink"],
+              ["ENS AI Agents", "$2,500", "Best ENS for AI Agents", "Real subnames, text records, ERC-8004 identities, reputation.", "green"],
+              ["ENS Creative", "$2,500", "Most Creative ENS", "Machine-readable capability manifests in resolver text records.", "green"],
+              ["KeeperHub", "$4,500", "Best Use of KeeperHub", "Direct Execution adapter with reliability and audit story.", "gold"]
+            ].map(([sponsor, amount, title, desc, color]) => (
+              <div className="prize-box" key={sponsor}>
+                <div className="prize-sponsor">{sponsor}</div>
+                <div className={`prize-amount prize-${color}`}>{amount}</div>
+                <div className="prize-title">{title}</div>
+                <p className="prize-desc">{desc}</p>
+              </div>
+            ))}
           </div>
         </section>
       </main>
 
-      <footer className="footer">
+      <footer>
         <div className="footer-inner">
-          <span>AgentOS for Open Agents</span>
-          <span>ENS, Uniswap, KeeperHub, OpenAI</span>
+          <Link href="/" className="footer-logo">Agent<em>OS</em></Link>
+          <div className="footer-links">
+            <a href="https://github.com/NikhilRaikwar/agentfi-os">GitHub</a>
+            <a href="https://docs.ens.domains">ENS Docs</a>
+            <a href="https://developers.uniswap.org">Uniswap API</a>
+            <a href="https://docs.keeperhub.com">KeeperHub</a>
+          </div>
+          <span className="footer-right">ETHGlobal Open Agents 2026 - Sepolia Testnet</span>
         </div>
       </footer>
     </>
