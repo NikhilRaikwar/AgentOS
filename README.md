@@ -3,7 +3,17 @@
 > **The operating system for onchain AI agents.**
 > ENS gives agents identity and discovery. Uniswap gives agents financial rails. KeeperHub gives agents reliable execution with an audit trail.
 
-🏆 Built for **ETHGlobal Open Agents 2026** · Live on Sepolia · [agentos.nikhilraikwar.me](https://agentos.nikhilraikwar.me)
+Built for **ETHGlobal Open Agents 2026**. Live on Sepolia.
+
+## Live Links
+
+| Link | URL |
+|---|---|
+| Live demo | [agentos.nikhilraikwar.me](https://agentos.nikhilraikwar.me) |
+| Backend health | [agentos-seiv.onrender.com/health](https://agentos-seiv.onrender.com/health) |
+| ENS namespace | [sepolia.app.ens.domains/agentos.eth](https://sepolia.app.ens.domains/agentos.eth) |
+| ENS subnames | [agentos.eth subnames](https://sepolia.app.ens.domains/agentos.eth?tab=subnames) |
+| Demo agent | [tradedemo.agentos.eth](https://sepolia.app.ens.domains/tradedemo.agentos.eth) |
 
 ---
 
@@ -25,7 +35,7 @@ AI agents can reason, but they fail at the parts that matter most onchain:
 | No decentralized discovery | Agent capabilities stored as ENS text records — no central DB needed |
 | No verifiable reputation | ERC-8004-style onchain identity, feedback, and validation registries |
 | Execution fails on gas, approvals, retries | KeeperHub Direct Execution handles the transaction lifecycle |
-| No clean payment path between agents | Uniswap Trading API routes value to an agent's preferred token |
+| No transparent financial rail for agent actions | Uniswap Trading API prepares quotes and swaps for user-owned agent wallets |
 
 ---
 
@@ -207,7 +217,7 @@ graph LR
 
     O -->|resolve ENS| T & R
     T -->|read records| TR
-    O -->|pick by specialty + reputation\npay via Uniswap\ncall endpoint| T
+    O -->|pick by specialty + reputation\ncall endpoint| T
 ```
 
 ---
@@ -255,7 +265,7 @@ POST /swap               — Universal Router calldata preparation
 - Input: `1 USDC` → Output: `0.000122895544056695 WETH`
 - Swap tx: [0xbc7bdf...](https://sepolia.etherscan.io/tx/0xbc7bdf9a6bd1fe4fe627835b75c13681c65a5d9b30f16321a1b0f65ef2282293)
 
-**Why it matters:** Agents do not just show a swap UI. Uniswap is the financial rail for agent payments and autonomous DeFi execution from user-owned smart wallets.
+**Why it matters:** Agents do not just show a swap UI. Uniswap is the financial rail for autonomous DeFi execution from user-owned smart wallets.
 
 > `FEEDBACK.md` is in the repo root with real Uniswap integration notes.
 
