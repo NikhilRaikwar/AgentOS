@@ -467,6 +467,9 @@ footer { position: relative; z-index: 1; padding: 40px 48px; border-top: 1px sol
 .directory-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 14px; }
 .agent-directory-card { min-height: 180px; padding: 16px; border: 1px solid var(--rule); border-radius: 3px; background: var(--cream); display: flex; flex-direction: column; gap: 10px; }
 .agent-directory-card p { color: var(--ink3); font-size: 12px; line-height: 1.55; }
+.search-panel { padding: 14px; border-bottom: 1px solid var(--rule); }
+.search-row { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; margin-top: 6px; }
+.field-label { color: var(--ink3); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; }
 .agent-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: auto; }
 .secondary-inline {
   min-height: 40px;
@@ -550,6 +553,7 @@ footer { position: relative; z-index: 1; padding: 40px 48px; border-top: 1px sol
 
 @media (max-width: 980px) {
   .hero, .dashboard-grid, .directory-grid, .metrics-row, .stack-grid, .steps-grid, .proof-grid { grid-template-columns: 1fr; }
+  .search-row { grid-template-columns: 1fr; }
   .fund-grid { grid-template-columns: 1fr; }
   .hero-card { display: none; }
   .landing-nav { padding: 0 24px; }

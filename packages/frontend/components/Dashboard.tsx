@@ -111,7 +111,7 @@ type ExecutionProof = {
   swap?: { keeperHubRunId?: string; txHash?: Hex } | null;
 };
 
-type DashboardPage = "dashboard" | "agents" | "activity" | "ens";
+type DashboardPage = "dashboard" | "agents" | "search" | "activity" | "ens";
 
 const initialSteps: DeployStep[] = [
   { label: "Create user-owned agent smart wallet", status: "idle" },
@@ -366,7 +366,10 @@ export function Dashboard() {
   const [deploying, setDeploying] = useState(false);
   const [deploySteps, setDeploySteps] = useState(initialSteps);
   const [createdAgents, setCreatedAgents] = useState<CreatedAgent[]>([]);
+  const [discoveredAgents, setDiscoveredAgents] = useState<CreatedAgent[]>([]);
   const [page, setPage] = useState<DashboardPage>("dashboard");
+  const [agentSearch, setAgentSearch] = useState("");
+  const [agentSearchStatus, setAgentSearchStatus] = useState("");
   const [agentsLoading, setAgentsLoading] = useState(false);
   const [agentsLoadError, setAgentsLoadError] = useState("");
   const [fundEthAmount, setFundEthAmount] = useState("0.005");
@@ -382,7 +385,13 @@ export function Dashboard() {
   const [lastExecutionProof, setLastExecutionProof] = useState<ExecutionProof | null>(null);
   const [ensProofStatus, setEnsProofStatus] = useState("");
 
-  const selectedCreatedAgent = createdAgents.find((item) => item.ensName === agent) || createdAgents[0];
+  const allAgents = useMemo(() => {
+    const byName = new Map<string, CreatedAgent>();
+    [...discoveredAgents, ...createdAgents].forEach((created) => byName.set(created.ensName, created));
+    return [...byName.values()];
+  }, [createdAgents, discoveredAgents]);
+
+  const selectedCreatedAgent = allAgents.find((item) => item.ensName === agent) || allAgents[0];
   const selectedRecords = selectedCreatedAgent?.records || {};
   const selectedAgentLabel = selectedCreatedAgent
     ? selectedCreatedAgent.ensName.replace(`.${parentEnsName}`, "")
@@ -397,9 +406,35 @@ export function Dashboard() {
     ["Owner Wallet", address ? shortAddress(address) : "Connect", "new agents are owned by the connected wallet"]
   ], [address, createdAgents.length]);
 
+  const filteredAgents = useMemo(() => {
+    const query = agentSearch.trim().toLowerCase();
+    if (!query) return allAgents;
+    return allAgents.filter((created) => {
+      const haystack = [
+        created.ensName,
+        created.specialty,
+        created.preferredToken,
+        created.fee,
+        created.owner,
+        created.smartWallet,
+        ...Object.entries(created.records).flat()
+      ].join(" ").toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [agentSearch, allAgents]);
+
+  const normalizedSearchName = (() => {
+    const value = agentSearch.trim().toLowerCase();
+    if (!value) return "";
+    if (value.endsWith(`.${parentEnsName}`)) return value;
+    if (/^[a-z0-9-]+$/.test(value)) return `${value}.${parentEnsName}`;
+    return "";
+  })();
+
   const titleByPage: Record<DashboardPage, string> = {
     dashboard: "Dashboard",
     agents: "Agent Directory",
+    search: "Search Agents",
     activity: "Wallet Activity",
     ens: "ENS Records"
   };
@@ -418,6 +453,45 @@ export function Dashboard() {
       }
     }));
     return Object.fromEntries(entries.filter(Boolean) as Array<readonly [string, string]>);
+  }
+
+  async function fetchEnsAgent(name = normalizedSearchName) {
+    if (!publicClient || !name) {
+      setAgentSearchStatus("Enter a valid agent name like tradedemo.agentos.eth.");
+      return;
+    }
+    if (!name.endsWith(`.${parentEnsName}`)) {
+      setAgentSearchStatus(`Only ${parentEnsName} subnames are supported in this demo.`);
+      return;
+    }
+    setAgentSearchStatus(`Resolving ${name} from ENS records...`);
+    try {
+      const [resolvedAddress, records] = await Promise.all([
+        publicClient.getEnsAddress({ name }),
+        readAgentTextRecords(name)
+      ]);
+      const walletFromRecord = records["agentos.wallet"] || records.wallet || resolvedAddress;
+      if (!walletFromRecord || !isAddress(walletFromRecord)) {
+        setAgentSearchStatus(`${name} does not resolve to an agent wallet.`);
+        return;
+      }
+      const ownerFromRecord = records["agentos.owner"];
+      const discovered = {
+        ensName: name,
+        smartWallet: walletFromRecord,
+        owner: ownerFromRecord && isAddress(ownerFromRecord) ? ownerFromRecord : walletFromRecord,
+        specialty: records.specialty || "unknown",
+        fee: records.fee || "not set",
+        preferredToken: records.preferred_token || "not set",
+        endpoint: records.endpoint || `${apiUrl}/agents/${name.replace(`.${parentEnsName}`, "")}/run`,
+        records
+      } satisfies CreatedAgent;
+      setDiscoveredAgents((agents) => [discovered, ...agents.filter((created) => created.ensName !== name)]);
+      setAgent(discovered.ensName);
+      setAgentSearchStatus(`${name} loaded from ENS. You can inspect its records and proofs. Runtime execution requires the owner wallet.`);
+    } catch (error) {
+      setAgentSearchStatus(error instanceof Error ? error.message : String(error));
+    }
   }
 
   async function loadAgentsFromChain() {
@@ -644,6 +718,11 @@ export function Dashboard() {
     if (!text.trim()) return;
     if (!selectedCreatedAgent) {
       setMessages((prev) => [...prev, { role: "agent", text: "Create a real agent first. The runtime is intentionally disabled until there is an ENS subname and smart wallet to operate as." }]);
+      return;
+    }
+    const ownsSelectedAgent = createdAgents.some((created) => created.ensName === selectedCreatedAgent.ensName);
+    if (!ownsSelectedAgent) {
+      setMessages((prev) => [...prev, { role: "agent", text: `${selectedCreatedAgent.ensName} was discovered from ENS, but this connected wallet does not own it. You can inspect its records, wallet, and latest proofs. To execute swaps from an agent wallet, connect the owner wallet or create your own agent.` }]);
       return;
     }
     const priorMessages = messages;
@@ -1027,7 +1106,7 @@ export function Dashboard() {
             <button
               className={`nav-item ${page === key ? "active" : ""}`}
               key={key}
-              onClick={() => key === "deploy" ? setModalOpen(true) : setPage((key === "search" ? "agents" : key) as DashboardPage)}
+              onClick={() => key === "deploy" ? setModalOpen(true) : setPage(key as DashboardPage)}
             >
               <span className="nav-icon" aria-hidden="true">{icon}</span>
               {label}
@@ -1074,11 +1153,11 @@ export function Dashboard() {
                 <span className="small-badge">OpenAI tools</span>
               </div>
               <div className="agent-tabs">
-                {createdAgents.length === 0 ? (
+                {allAgents.length === 0 ? (
                   <button className="agent-tab active" onClick={() => setModalOpen(true)}>
                     {agentsLoading ? "Loading onchain agents..." : "Create real agent"}
                   </button>
-                ) : createdAgents.map((created) => (
+                ) : allAgents.map((created) => (
                   <button className={`agent-tab ${selectedCreatedAgent?.ensName === created.ensName ? "active" : ""}`} key={created.ensName} onClick={() => selectAgent(created)}>
                     {created.ensName}
                   </button>
@@ -1200,6 +1279,75 @@ export function Dashboard() {
                       <a href={ensAppLink(created.ensName)} target="_blank" rel="noreferrer">ENS profile</a>
                       {created.ensTx ? <a href={txLink(created.ensTx)} target="_blank" rel="noreferrer">ENS tx</a> : null}
                       {created.registryTx ? <a href={txLink(created.registryTx)} target="_blank" rel="noreferrer">Registry tx</a> : null}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          </section>
+        ) : null}
+
+        {page === "search" ? (
+          <section className="content-panel">
+            <div className="panel">
+              <div className="panel-head">
+                <div>
+                  <p className="eyebrow">ENS discovery</p>
+                  <h2>Search agentos.eth agents</h2>
+                </div>
+                <a className="tiny-btn" href="https://sepolia.app.ens.domains/agentos.eth?tab=subnames" target="_blank" rel="noreferrer">Subnames</a>
+              </div>
+              <div className="search-panel">
+                <label className="field-label" htmlFor="agent-search">Search by ENS name, specialty, token, wallet, or text record</label>
+                <div className="search-row">
+                  <input
+                    id="agent-search"
+                    className="field"
+                    value={agentSearch}
+                    onChange={(event) => setAgentSearch(event.target.value)}
+                    onKeyDown={(event) => event.key === "Enter" && fetchEnsAgent()}
+                    placeholder="tradedemo, trading, USDC, wallet address..."
+                    autoComplete="off"
+                  />
+                  {normalizedSearchName ? (
+                    <a className="secondary-inline" href={ensAppLink(normalizedSearchName)} target="_blank" rel="noreferrer">Open ENS</a>
+                  ) : null}
+                  <button className="secondary-inline" onClick={() => fetchEnsAgent()} disabled={!normalizedSearchName}>Fetch Agent</button>
+                </div>
+                <div className="notice-box">
+                  Public discovery is ENS-first. Type a name like <code>tradedemo.agentos.eth</code>, fetch its text records, and inspect what the agent is built for. Swap execution stays tied to the agent owner wallet.
+                </div>
+                {agentSearchStatus ? <div className="notice-box">{agentSearchStatus}</div> : null}
+              </div>
+              <div className="directory-grid">
+                {filteredAgents.length === 0 ? (
+                  <div className="empty-state directory-empty">
+                    <strong>{allAgents.length === 0 ? "No agents loaded yet." : "No matching loaded agents."}</strong>
+                    <span>Type an exact agentos.eth name and click Fetch Agent, or open the public agentos.eth subnames page to inspect names created by other wallets.</span>
+                    <div className="tx-row">
+                      <button className="secondary-inline" onClick={() => setModalOpen(true)}>Deploy Agent</button>
+                      <a className="secondary-inline" href="https://sepolia.app.ens.domains/agentos.eth?tab=subnames" target="_blank" rel="noreferrer">Open Subnames</a>
+                    </div>
+                  </div>
+                ) : null}
+                {filteredAgents.map((created) => (
+                  <article className="agent-directory-card" key={created.ensName}>
+                    <a className="agent-ens proof-link" href={ensAppLink(created.ensName)} target="_blank" rel="noreferrer">{created.ensName}</a>
+                    <p>{created.specialty} agent. Fee {created.fee}. Preferred token {created.preferredToken}.</p>
+                    <div className="agent-tags">
+                      <span className="tag tag-active">ENS discoverable</span>
+                      <span className="tag tag-ens">{created.preferredToken}</span>
+                      <span className="tag tag-res">rep {created.records.reputation || created.records["agentos.reputation"] || "new"}</span>
+                    </div>
+                    {createdAgents.some((owned) => owned.ensName === created.ensName) ? (
+                      <button className="secondary-inline" onClick={() => { selectAgent(created); setPage("dashboard"); }}>Use in runtime</button>
+                    ) : (
+                      <button className="secondary-inline" onClick={() => { selectAgent(created); setPage("ens"); }}>Inspect records</button>
+                    )}
+                    <div className="tx-row">
+                      <a href={ensAppLink(created.ensName)} target="_blank" rel="noreferrer">ENS profile</a>
+                      <a href={`https://sepolia.etherscan.io/address/${created.smartWallet}`} target="_blank" rel="noreferrer">Agent wallet</a>
+                      {created.records["agentos.lastExecutionTx"] ? <a href={txLink(created.records["agentos.lastExecutionTx"] as `0x${string}`)} target="_blank" rel="noreferrer">Latest tx</a> : null}
                     </div>
                   </article>
                 ))}
