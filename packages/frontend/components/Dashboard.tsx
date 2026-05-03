@@ -30,7 +30,7 @@ import {
   sepoliaContracts
 } from "../lib/contracts";
 
-const apiUrl = process.env.NEXT_PUBLIC_API_URL || "/api/backend";
+const apiUrl = "/api/backend";
 const parentEnsName = process.env.NEXT_PUBLIC_PARENT_ENS_NAME || "agentos.eth";
 const logLookbackBlocks = BigInt(process.env.NEXT_PUBLIC_AGENT_LOG_LOOKBACK_BLOCKS || "5000");
 const logChunkSize = BigInt(process.env.NEXT_PUBLIC_AGENT_LOG_CHUNK_BLOCKS || "5000");
