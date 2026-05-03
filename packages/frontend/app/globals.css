@@ -172,6 +172,14 @@ h1 em, .section-title em { color: var(--green); font-style: italic; }
 }
 .hero-desc { margin-bottom: 40px; font-size: 17px; }
 .hero-actions, .sponsor-row { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.hero-tagline {
+  margin-top: 16px;
+  color: var(--ink3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
 .sponsor-row { margin-top: 40px; gap: 6px; }
 .sponsor-label { margin-right: 4px; color: var(--ink3); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
 .sponsor-pill {

@@ -81,6 +81,14 @@ const stack = [
   }
 ];
 
+const contractLinks = [
+  ["AgentSubnameRegistrar", "Mints real name.agentos.eth subnames and ENS text records", "0x3ccF94F8B4E5Dd6886A7cbcb2f3C52482dA4ff9E"],
+  ["AgentWalletFactory", "Creates user-owned smart wallets for new agents", "0x75C553505C7912377E08e4B9b2c824D722a704CB"],
+  ["AgentRegistry", "Indexes created agents for onchain discovery", "0x4180F328e2600E8b846e13A1EFe85D21690C6e55"]
+] as const;
+
+const etherscanAddress = (address: string) => `https://sepolia.etherscan.io/address/${address}`;
+
 export function LandingPage() {
   const { isConnected } = useAccount();
   const router = useRouter();
@@ -112,20 +120,15 @@ export function LandingPage() {
       <main>
         <section className="hero">
           <div className="hero-left">
-            <div className="issue-line fade-up d1">
-              <span className="issue-badge"><span className="issue-dot" />Live on Sepolia</span>
-              <span>ETHGlobal Open Agents 2026</span>
-            </div>
-
-            <div className="hero-announcement fade-up d2">AgentOS - The Onchain Agent Layer</div>
+            <div className="hero-announcement fade-up d1">AgentOS - ETHGlobal Open Agents 2026 · Live on Sepolia</div>
             <h1 className="fade-up d2">
-              The <em>operating system</em><br />for AI agents that<br />own, pay and prove.
+              The operating system<br />for <em>onchain AI agents</em>
             </h1>
 
             <p className="hero-desc fade-up d3">
-              ENS gives every agent a human-readable identity and reputation.
-              Uniswap gives them financial rails. KeeperHub helps final transactions land.
-              No server custody. No raw-address agent discovery.
+              ENS gives agents persistent identity and discovery.
+              Uniswap gives them financial rails.
+              KeeperHub gives them reliable execution and audit trails.
             </p>
 
             <div className="hero-actions fade-up d4">
@@ -141,6 +144,8 @@ export function LandingPage() {
               <a href="#how" className="btn-outline">See how it works</a>
             </div>
 
+            <p className="hero-tagline fade-up d5">No server custody. Real ENS subnames. Verifiable onchain actions.</p>
+
             <div className="sponsor-row fade-up d5">
               <span className="sponsor-label">Powered by</span>
               <span className="sponsor-pill">ENS Sepolia</span>
@@ -153,24 +158,32 @@ export function LandingPage() {
           <div className="hero-card fade-up d3">
             <div className="card-header">
               <div className="card-header-dots"><div className="hdot" /><div className="hdot" /><div className="hdot" /></div>
-              <span className="card-title">agentos - runtime</span>
+              <span className="card-title">live public proof</span>
             </div>
             <div className="card-body">
-              <div className="term-line"><span className="prompt">$ </span><span className="cmd">agentos deploy trade.agentos.eth</span></div>
-              <div className="term-line out t-dim">- Calling AgentWalletFactory...</div>
-              <div className="term-line out"><span className="t-green">ok</span> Smart wallet deployed - owner: connected wallet</div>
-              <div className="term-line out t-dim">- Minting ENS subname...</div>
-              <div className="term-line out"><span className="t-green">ok</span> <span className="t-green">trade.agentos.eth</span> to smart wallet</div>
-              <div className="term-line out t-dim">- Writing text records...</div>
-              <div className="term-line out"><span className="t-green">ok</span> specialty=trading,defi fee=0.001ETH</div>
-              <div className="term-line out t-dim">- Minting ERC-8004 identity...</div>
-              <div className="term-line out"><span className="t-green">ok</span> identity NFT to connected wallet</div>
+              <div className="proof-title">tradedemo.agentos.eth</div>
+              <p className="stack-desc">
+                Real ENS identity, user-owned smart wallet, latest KeeperHub-routed Uniswap swap,
+                and execution proof written back to ENS text records.
+              </p>
+              <div className="tx-row">
+                <a className="proof-link" href="https://sepolia.app.ens.domains/tradedemo.agentos.eth" target="_blank" rel="noreferrer">Open ENS identity</a>
+                <a className="proof-link" href="https://sepolia.etherscan.io/tx/0x591e614aa5c0eea004fffb79d0ab818ecf5999186cd3d916c530c159a0b31bbe" target="_blank" rel="noreferrer">Latest swap tx</a>
+                <a className="proof-link" href="https://sepolia.etherscan.io/address/0x3f962D91813D7a2230580EA11475305FC6Ef6F7E" target="_blank" rel="noreferrer">Agent wallet</a>
+              </div>
               <hr className="divider-line" />
-              <div className="term-line"><span className="prompt">$ </span><span className="cmd">quote 0.01 ETH to USDC</span></div>
-              <div className="term-line out t-dim">- Calling Uniswap quote...</div>
-              <div className="term-line out"><span className="t-pink">route</span> best price prepared</div>
-              <div className="term-line out t-dim">- Routing via KeeperHub...</div>
-              <div className="term-line out"><span className="t-gold">exec</span> Direct Execution ready</div>
+              <div className="record-row">
+                <span className="record-key">last tx</span>
+                <span className="record-val">0x591e614aa5c0eea004fffb79d0ab818ecf5999186cd3d916c530c159a0b31bbe</span>
+              </div>
+              <div className="record-row">
+                <span className="record-key">KeeperHub run</span>
+                <span className="record-val">xgni3xqq3n0vvcdds0p96</span>
+              </div>
+              <div className="record-row">
+                <span className="record-key">swap</span>
+                <span className="record-val">1 USDC to 0.000123697808408471 WETH on Sepolia</span>
+              </div>
             </div>
           </div>
         </section>
@@ -242,13 +255,49 @@ export function LandingPage() {
             ))}
           </div>
         </section>
+
+        <div className="section-full" id="contracts">
+          <div className="section-full-inner">
+            <span className="kicker">Sepolia contracts</span>
+            <h2 className="section-title">Public proof for<br /><em>AgentOS agents.</em></h2>
+            <p className="section-desc">
+              These are the contracts needed to prove the main flow:
+              mint an ENS agent name, create its user-owned wallet, and register it for discovery.
+            </p>
+            <div className="proof-grid">
+              {contractLinks.map(([name, desc, address], index) => (
+                <div className="proof-card" key={address}>
+                  <div className={`proof-index ${index % 4 === 0 ? "proof-green" : index % 4 === 1 ? "proof-blue" : index % 4 === 2 ? "proof-gold" : "proof-pink"}`}>{String(index + 1).padStart(2, "0")}</div>
+                  <div className="proof-title">{name}</div>
+                  <p className="proof-desc">{desc}</p>
+                  <div className="tx-row">
+                    <a className="proof-link" href={etherscanAddress(address)} target="_blank" rel="noreferrer">
+                      {address.slice(0, 8)}...{address.slice(-6)}
+                    </a>
+                  </div>
+                </div>
+              ))}
+              <div className="proof-card">
+                <div className="proof-index proof-green">ENS</div>
+                <div className="proof-title">agentos.eth namespace</div>
+                <p className="proof-desc">View the parent ENS name and open the Subnames tab to see minted agents under agentos.eth.</p>
+                <div className="tx-row">
+                  <a className="proof-link" href="https://sepolia.app.ens.domains/agentos.eth" target="_blank" rel="noreferrer">Open agentos.eth</a>
+                  <a className="proof-link" href="https://sepolia.app.ens.domains/agentos.eth?tab=subnames" target="_blank" rel="noreferrer">Subnames view</a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </main>
 
       <footer>
         <div className="footer-inner">
           <Link href="/" className="footer-logo">Agent<em>OS</em></Link>
           <div className="footer-links">
-            <a href="https://github.com/NikhilRaikwar/agentfi-os">GitHub</a>
+            <a href="https://github.com/NikhilRaikwar/AgentOS">GitHub</a>
+            <a href="#contracts">Contracts</a>
+            <a href="https://sepolia.app.ens.domains/agentos.eth">ENS Namespace</a>
             <a href="https://docs.ens.domains">ENS Docs</a>
             <a href="https://developers.uniswap.org">Uniswap API</a>
             <a href="https://docs.keeperhub.com">KeeperHub</a>
