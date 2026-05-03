@@ -17,6 +17,32 @@ Built for **ETHGlobal Open Agents 2026**. Live on Sepolia.
 
 ---
 
+## Contents
+
+- [One-Line Pitch](#one-line-pitch)
+- [What It Solves](#what-it-solves)
+- [Live Proof — Real Sepolia Transactions](#live-proof--real-sepolia-transactions)
+- [Architecture](#architecture)
+  - [System Overview](#system-overview)
+  - [User Flow — Deploy an Agent](#user-flow--deploy-an-agent-4-wallet-signatures)
+  - [Agent Execution Flow](#agent-execution-flow--chat--quote--keeperhub-swap)
+  - [ENS as the Agent Discovery Layer](#ens-as-the-agent-discovery-layer)
+- [Sponsor Integration Fit](#sponsor-integration-fit)
+  - [ENS](#ens)
+  - [Uniswap](#uniswap)
+  - [KeeperHub](#keeperhub)
+- [Deployed Contracts](#deployed-contracts-sepolia)
+- [Project Structure](#project-structure)
+- [Local Setup](#local-setup)
+- [Demo Walkthrough](#demo-walkthrough)
+- [ENS Configuration](#ens-configuration)
+- [Known Limitations](#known-limitations)
+- [Environment Variables](#environment-variables)
+- [Feedback Files](#feedback-files)
+- [Team](#team)
+
+---
+
 ## One-Line Pitch
 
 AgentOS is an OS layer for onchain AI agents: every agent gets an ENS name, a user-owned smart wallet, Uniswap financial rails, and verifiable KeeperHub execution.
@@ -224,7 +250,9 @@ graph LR
 
 ## Sponsor Integration Fit
 
-### 🌐 ENS — AI Agent Identity + Creative ENS Records
+### ENS
+
+**🌐 AI Agent Identity + Creative ENS Records**
 
 ENS is not cosmetic. ENS is the **runtime directory** for every agent.
 
@@ -248,7 +276,9 @@ ENS is not cosmetic. ENS is the **runtime directory** for every agent.
 
 ---
 
-### 🦄 Uniswap — Trading API Integration
+### Uniswap
+
+**🦄 Trading API Integration**
 
 AgentOS uses the Uniswap Trading API as the financial execution rail for ENS-named agents.
 
@@ -271,7 +301,9 @@ POST /swap               — Universal Router calldata preparation
 
 ---
 
-### ⚙️ KeeperHub — Reliable Execution + Builder Feedback
+### KeeperHub
+
+**⚙️ Reliable Execution + Builder Feedback**
 
 AgentOS routes confirmed Uniswap execution through KeeperHub Direct Execution.
 
@@ -451,9 +483,30 @@ The OpenAI agent:
 2. Calls `uniswap_get_quote` → Uniswap `/quote`
 3. Shows route + expected output
 4. Requires confirmation before execution
-5. Routes confirmed execution through KeeperHub
 
-### Part 5 — Write Proof Back to ENS
+If the agent wallet is not authorized yet, execution is blocked. This is expected: `AgentSmartWallet` only forwards calls to allowlisted targets.
+
+### Part 5 - Fund and Authorize the Agent Wallet
+
+Open **Wallet Activity** for the selected agent:
+
+1. Fund the agent smart wallet with Sepolia ETH for gas and USDC for the demo swap
+2. Click **Authorize Execution** to allow the configured executor to call USDC, Permit2, and the Uniswap Universal Router through `AgentSmartWallet.execute`
+3. Confirm the authorization transactions from the connected owner wallet
+
+After this, the agent wallet can route a confirmed swap through KeeperHub without giving the backend custody of the user's private key.
+
+### Part 6 - Execute the Swap
+
+Return to the chat and confirm the swap. The runtime:
+
+1. Uses the cached Uniswap quote
+2. Prepares any required approval or Permit2 transaction
+3. Wraps the swap in `AgentSmartWallet.execute(target, value, data)`
+4. Sends the structured contract call to KeeperHub Direct Execution
+5. Returns the KeeperHub run ID and public Sepolia Etherscan transaction link
+
+### Part 7 - Write Proof Back to ENS
 
 After a confirmed swap, click **Write Proof to ENS** to store `agentos.lastExecutionTx`, `agentos.lastKeeperHubRun`, and updated `reputation` back into the agent's ENS text records.
 
