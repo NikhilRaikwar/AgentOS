@@ -19,32 +19,17 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install root dependencies
-        run: npm install
-
-      - name: Install backend dependencies
-        working-directory: packages/backend
-        run: npm install --workspaces=false
-
-      - name: Install frontend dependencies
-        working-directory: packages/frontend
-        run: npm install --workspaces=false
-
-      - name: Install contract dependencies
-        working-directory: packages/contracts
-        run: npm install --workspaces=false
+      - name: Install dependencies
+        run: npm ci
 
       - name: Build backend
-        working-directory: packages/backend
-        run: npm run build
+        run: npm run build --workspace backend
 
       - name: Compile contracts
-        working-directory: packages/contracts
-        run: npm run build
+        run: npm run build --workspace contracts
 
       - name: Build frontend
-        working-directory: packages/frontend
-        run: npm run build
+        run: npm run build --workspace frontend
         env:
           NEXT_PUBLIC_APP_NAME: AgentFi OS
           NEXT_PUBLIC_API_URL: http://localhost:3001
