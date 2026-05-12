@@ -65,7 +65,16 @@ async function uniswapFetch(path: string, body?: Json, method = "POST") {
     body: body ? JSON.stringify(body) : undefined
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(`Uniswap API ${res.status}: ${JSON.stringify(data)}`);
+  if (!res.ok) {
+    const detail = typeof data.detail === "string" ? data.detail : "";
+    const errorCode = typeof data.errorCode === "string" ? data.errorCode : "";
+    if (path === "/quote" && (errorCode === "ResourceNotFound" || /no quotes available/i.test(detail))) {
+      throw new Error(
+        "Uniswap could not find a Sepolia route for this quote. Try a funded agent wallet, a smaller amount, or another Sepolia pair; testnet liquidity can disappear."
+      );
+    }
+    throw new Error(`Uniswap API ${res.status}: ${JSON.stringify(data)}`);
+  }
   return data;
 }
 
@@ -100,7 +109,7 @@ export async function getQuote(params: {
     tokenOutChainId: String(params.chainId),
     amount: params.amount,
     type: params.type || "EXACT_INPUT",
-    routingPreference: "BEST_PRICE",
+    protocols: ["V2", "V3", "V4"],
     autoSlippage: "DEFAULT",
     urgency: "urgent"
   });

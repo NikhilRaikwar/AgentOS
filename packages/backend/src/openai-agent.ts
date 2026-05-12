@@ -228,8 +228,16 @@ Always show a Uniswap quote before any transaction and require confirmation befo
   messages.push(assistant);
   for (const call of assistant.tool_calls) {
     const args = JSON.parse(call.function.arguments || "{}");
-    const result = await runTool(call.function.name, args, agentEnsName, params.walletAddress);
     toolCallsMade.push(call.function.name);
+    let result: unknown;
+    try {
+      result = await runTool(call.function.name, args, agentEnsName, params.walletAddress);
+    } catch (error) {
+      result = {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
     messages.push({
       role: "tool",
       tool_call_id: call.id,
